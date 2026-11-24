@@ -1,0 +1,68 @@
+# Smetka
+
+**A private personal-finance dashboard.** Drop in a CSV statement from your bank. Smetka works out the format, categorizes every transaction, tracks budgets and finds your subscriptions. Nothing leaves the browser: there's no server, no account and no upload.
+
+> *Сметка* is Bulgarian for “account” and “bill”.
+
+![Overview](docs/overview.png)
+
+| Import wizard | Transactions |
+|---|---|
+| ![Import](docs/import.png) | ![Transactions](docs/transactions.png) |
+
+## What it does
+
+- **Imports messy bank exports.** UTF-8 or Windows-1251, `;` `,` or tab delimiters, account-info preamble lines before the table, `DD.MM.YYYY` / ISO / US dates, `1 234,56` or `1,234.56` amounts, and debit/credit columns or `Д/К` markers. Columns are guessed from header names first and cell contents second, and you can correct the guess in a live preview.
+- **Remembers each bank's format.** The column mapping is saved against the header row's signature, so the second import from the same bank is one click.
+- **Never double-counts.** Each row gets a stable fingerprint, so overlapping exports skip what's already there. Identical rows inside one file (two €2.50 coffees on the same day) stay separate.
+- **Handles the lev-to-euro switch.** Bulgaria adopted the euro on 1 Jan 2026. Leva amounts are converted at the fixed 1.95583 rate. Without a currency column, dates before 2026 are treated as leva automatically.
+- **Categorizes automatically, then learns.** More than 230 built-in rules cover merchants common in Bulgaria, in both Latin and Cyrillic spelling. When you change a category, Smetka offers to remember the merchant, re-categorizes the matching history and applies the rule to future imports. Manual choices are never overwritten.
+- **Finds subscriptions.** It looks for charges from the same merchant at regular intervals for a steady amount. Groceries don't qualify because the amounts vary. It also flags price increases and shows the yearly cost.
+- **Projects budgets.** Monthly limits per category with a month-end projection at the current pace. It can also suggest a limit from your last three months.
+- **Undo, backup, restore.** Any import can be rolled back. All data exports to and restores from JSON.
+- Bulgarian and English, dark and light themes, works on mobile, keyboard-accessible custom controls, respects `prefers-reduced-motion`.
+
+## Try it
+
+Open the app and click **Try with demo data**, or go to **Import → Try a sample statement**. The demo generates about seven months of realistic Sofia-based finances that end today. The descriptions use real export formats, so they go through the same categorizer as your own data.
+
+## Tech
+
+| | |
+|---|---|
+| UI | React 19 + TypeScript, hand-built components (select, segmented control, modal, toasts) |
+| Storage | IndexedDB via Dexie, with live queries so every view updates when data changes |
+| Parsing | PapaParse plus custom encoding, header, date and amount detection |
+| Charts | Recharts |
+| Tests | Vitest: parsing, categorization, dedup, recurring detection, budgets |
+| Build | Vite, pages lazy-loaded, deployed to GitHub Pages by GitHub Actions |
+
+```
+src/
+  lib/          pure logic, no React. This is the part worth reading.
+    csv.ts          decoding, table detection, column guessing, row mapping, fingerprints
+    money.ts        amount parsing, BGN→EUR
+    dates.ts        date formats and detection
+    categorize.ts   merchant extraction, rule engine
+    categories.ts   categories and built-in rules
+    recurring.ts    subscription detection
+    stats.ts        monthly summaries, pace, budget projections
+    demo.ts         demo data and sample bank CSV
+  db.ts         IndexedDB schema, import, learning, undo, backup
+  pages/        Overview, Transactions, Import, Budgets, Settings
+  ui.tsx        shared components
+```
+
+## Run locally
+
+```bash
+npm install
+npm run dev        # http://localhost:5173
+npm test           # unit tests
+npm run build      # static site in dist/
+npm run build:single   # everything inlined into one index.html
+```
+
+## Deploy
+
+Push to `main`. The workflow in `.github/workflows/deploy.yml` runs the tests, builds the site and publishes it to GitHub Pages. In the repository settings, set **Pages → Source** to **GitHub Actions** once.
