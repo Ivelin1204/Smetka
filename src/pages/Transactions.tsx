@@ -4,7 +4,7 @@ import { learnFromMerchant, previewMerchantRule, setCategory } from '../db'
 import { useI18n } from '../i18n'
 import { CATEGORIES } from '../lib/categories'
 import { monthKey } from '../lib/dates'
-import { formatMoney } from '../lib/money'
+import { formatMoney, formatOriginal } from '../lib/money'
 import type { Transaction } from '../lib/types'
 import { CategoryIcon, Icon, Modal, Segmented, Select, useToast, type Option } from '../ui'
 
@@ -138,7 +138,7 @@ export default function Transactions({ txs, nav, months }: { txs: Transaction[];
                     <span className={'num strong ' + (x.amount > 0 ? 'good' : '')}>{formatMoney(x.amount, locale, { sign: x.amount > 0 })}</span>
                     {x.originalCurrency !== 'EUR' && (
                       <span className="muted small num">
-                        {x.originalAmount.toFixed(2)} {x.originalCurrency === 'BGN' ? 'лв.' : x.originalCurrency}
+                        {formatOriginal(x.originalAmount, x.originalCurrency, locale)}
                       </span>
                     )}
                   </div>

@@ -115,3 +115,12 @@ export function formatMoney(n: number, locale: string, opts: { sign?: boolean; c
   if (opts.sign) return (n < 0 ? '−' : n > 0 ? '+' : '') + s
   return n < 0 ? '−' + s : s
 }
+
+/** The amount as the bank wrote it, e.g. "−1 200,00 лв." — shown next to the converted euro value. */
+export function formatOriginal(n: number, currency: string, locale: string): string {
+  try {
+    return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n).replace('-', '−')
+  } catch {
+    return `${n.toFixed(2)} ${currency}`
+  }
+}

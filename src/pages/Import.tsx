@@ -4,17 +4,18 @@ import type { Nav } from '../App'
 import { allRules, db, importRows, type ImportResult } from '../db'
 import { useI18n } from '../i18n'
 import { categorize } from '../lib/categorize'
-import { decodeBytes, guessMapping, headerSignature, mapRows, parseTable, type ParsedTable } from '../lib/csv'
+import { guessMapping, headerSignature, mapRows, type ParsedTable } from '../lib/csv'
 import { DATE_FORMATS } from '../lib/dates'
 import { demoBankCsv } from '../lib/demo'
-import { formatMoney } from '../lib/money'
+import { ImportError, loadTable, type LoadedTable } from '../lib/fileImport'
+import { formatMoney, formatOriginal } from '../lib/money'
 import type { AmountMode, ColumnMapping, CurrencyMode, DateFormat, DecimalSep } from '../lib/types'
 import { CategoryIcon, Icon, Segmented, Select, useCountUp, type Option } from '../ui'
 
 interface Loaded {
   fileName: string
-  encoding: string
   table: ParsedTable
+  facts: LoadedTable['facts']
   signature: string
   known: boolean
 }
@@ -26,6 +27,7 @@ export default function ImportPage({ nav }: { nav: Nav }) {
   const [error, setError] = useState<string | null>(null)
   const [drag, setDrag] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [reading, setReading] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const rules = useLiveQuery(allRules, [], [])
@@ -33,16 +35,27 @@ export default function ImportPage({ nav }: { nav: Nav }) {
   const load = async (fileName: string, buf: ArrayBuffer) => {
     setError(null)
     setResult(null)
-    const { text, encoding } = decodeBytes(buf)
-    const table = parseTable(text)
-    const signature = headerSignature(table.headers)
+    setReading(true)
+    let read: LoadedTable
+    try {
+      read = await loadTable(fileName, buf)
+    } catch (e) {
+      const code = e instanceof ImportError ? e.code : 'unreadable'
+      setError(t(code === 'scanned-pdf' ? 'imp.errScanned' : code === 'no-table' ? 'imp.badFile' : 'imp.errUnreadable'))
+      setReading(false)
+      return
+    }
+    setReading(false)
+    const { table, facts } = read
+    // The same bank exports different layouts per format, so formats get separate saved mappings.
+    const signature = (table.source === 'csv' ? '' : table.source + ':') + headerSignature(table.headers)
     const saved = await db.profiles.get(signature)
     const guess = saved && Math.max(saved.mapping.date, saved.mapping.description) < table.headers.length ? saved.mapping : guessMapping(table)
     if (!table.rows.length || guess.date < 0) {
       setError(t('imp.badFile'))
       return
     }
-    setLoaded({ fileName, encoding, table, signature, known: !!saved })
+    setLoaded({ fileName, table, facts, signature, known: !!saved })
     setMapping(guess)
   }
 
@@ -51,13 +64,15 @@ export default function ImportPage({ nav }: { nav: Nav }) {
     await load(f.name, await f.arrayBuffer())
   }
 
-  const loadSample = () => load('sample-statement.csv', new TextEncoder().encode(demoBankCsv()).buffer as ArrayBuffer)
-
-  const downloadSample = () => {
-    const url = URL.createObjectURL(new Blob([demoBankCsv()], { type: 'text/csv;charset=utf-8' }))
-    const a = Object.assign(document.createElement('a'), { href: url, download: 'sample-statement.csv' })
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  const loadSampleCsv = () => load('sample-statement.csv', new TextEncoder().encode(demoBankCsv()).buffer as ArrayBuffer)
+  const loadSamplePdf = async () => {
+    try {
+      const res = await fetch('./sample-statement.pdf')
+      if (!res.ok) throw new Error()
+      await load('sample-statement.pdf', await res.arrayBuffer())
+    } catch {
+      setError(t('imp.errUnreadable'))
+    }
   }
 
   const mapped = useMemo(() => (loaded && mapping ? mapRows(loaded.table, mapping) : null), [loaded, mapping])
@@ -88,7 +103,8 @@ export default function ImportPage({ nav }: { nav: Nav }) {
           <h1>{t('imp.title')}</h1>
         </header>
         <div
-          className={'dropzone rise' + (drag ? ' drag' : '')}
+          className={'dropzone rise' + (drag ? ' drag' : '') + (reading ? ' reading' : '')}
+          aria-busy={reading}
           onDragOver={(e) => (e.preventDefault(), setDrag(true))}
           onDragLeave={() => setDrag(false)}
           onDrop={(e) => {
@@ -96,7 +112,7 @@ export default function ImportPage({ nav }: { nav: Nav }) {
             setDrag(false)
             onFile(e.dataTransfer.files[0])
           }}
-          onClick={() => input.current?.click()}
+          onClick={() => !reading && input.current?.click()}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && input.current?.click()}
@@ -104,11 +120,30 @@ export default function ImportPage({ nav }: { nav: Nav }) {
           <div className="drop-icon">
             <Icon name="file" size={30} />
           </div>
-          <strong className="drop-title">{t('imp.drop')}</strong>
-          <span className="muted">
-            {t('imp.or')} <span className="accent underline">{t('imp.browse')}</span>
-          </span>
-          <input ref={input} type="file" accept=".csv,.txt,text/csv" hidden onChange={(e) => onFile(e.target.files?.[0])} />
+          <strong className="drop-title">{reading ? t('imp.reading') : t('imp.drop')}</strong>
+          {reading ? (
+            <span className="loader" aria-hidden />
+          ) : (
+            <>
+              <span className="muted">
+                {t('imp.or')} <span className="accent underline">{t('imp.browse')}</span>
+              </span>
+              <span className="formats">
+                {['CSV', 'Excel', 'PDF'].map((f) => (
+                  <span key={f} className="format">
+                    {f}
+                  </span>
+                ))}
+              </span>
+            </>
+          )}
+          <input
+            ref={input}
+            type="file"
+            accept=".csv,.txt,.xlsx,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            hidden
+            onChange={(e) => onFile(e.target.files?.[0])}
+          />
         </div>
         {error && (
           <p className="error-note">
@@ -117,11 +152,12 @@ export default function ImportPage({ nav }: { nav: Nav }) {
         )}
         <p className="muted small center">{t('imp.hint')}</p>
         <div className="sample-row">
-          <button className="btn ghost" onClick={loadSample}>
-            <Icon name="sparkle" size={16} /> {t('imp.sample')}
+          <span className="muted small">{t('imp.sample')}</span>
+          <button className="btn ghost sm" disabled={reading} onClick={loadSampleCsv}>
+            <Icon name="file" size={15} /> CSV
           </button>
-          <button className="icon-btn" onClick={downloadSample} aria-label="Download sample">
-            <Icon name="download" size={17} />
+          <button className="btn ghost sm" disabled={reading} onClick={loadSamplePdf}>
+            <Icon name="file" size={15} /> PDF
           </button>
         </div>
       </div>
@@ -147,11 +183,13 @@ export default function ImportPage({ nav }: { nav: Nav }) {
           <Icon name="file" size={16} /> {loaded.fileName}
         </span>
         <span className="chip">
-          {t('imp.encoding')}: <b>{loaded.encoding.toUpperCase()}</b>
+          {t('imp.format')}: <b>{table.source === 'xlsx' ? 'Excel' : table.source.toUpperCase()}</b>
         </span>
-        <span className="chip">
-          {t('imp.delimiter')}: <b>{table.delimiter === '\t' ? 'TAB' : table.delimiter}</b>
-        </span>
+        {loaded.facts.map((f) => (
+          <span key={f.label} className="chip">
+            {t(`imp.${f.label}`)}: <b>{f.value}</b>
+          </span>
+        ))}
         <span className="chip">
           {t('imp.rows')}: <b>{table.rows.length}</b>
         </span>
@@ -161,6 +199,12 @@ export default function ImportPage({ nav }: { nav: Nav }) {
           </span>
         )}
       </div>
+
+      {table.source === 'pdf' && (
+        <p className="pdf-note rise">
+          <Icon name="sparkle" size={15} className="accent" /> {t('imp.pdfNote')}
+        </p>
+      )}
 
       <div className="import-grid">
         <div className="card rise" style={{ animationDelay: '60ms' }}>
@@ -265,7 +309,7 @@ export default function ImportPage({ nav }: { nav: Nav }) {
                   </span>
                   <span className={'num strong small right nowrap ' + (r.amount > 0 ? 'good' : '')}>
                     {formatMoney(r.amount, locale, { sign: r.amount > 0 })}
-                    {r.originalCurrency !== 'EUR' && <span className="muted block">{r.originalAmount.toFixed(2)} лв.</span>}
+                    {r.originalCurrency !== 'EUR' && <span className="muted block">{formatOriginal(r.originalAmount, r.originalCurrency, locale)}</span>}
                   </span>
                 </div>
               )

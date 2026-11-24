@@ -19,21 +19,28 @@ export function decodeBytes(buf: ArrayBuffer): DecodedFile {
   }
 }
 
+export type TableSource = 'csv' | 'xlsx' | 'pdf'
+
 export interface ParsedTable {
+  source: TableSource
   delimiter: string
   headerIndex: number
   headers: string[]
   rows: string[][]
 }
 
-/**
- * Parses CSV text and finds the real header row — many exports start with a few lines
- * of account info ("Сметка: BG12...", "Период: ...") before the table.
- */
+/** Parses CSV text. Delimiter is detected; the table itself is located by tableFromRows. */
 export function parseTable(text: string): ParsedTable {
   const res = Papa.parse<string[]>(text.trim(), { skipEmptyLines: 'greedy', delimitersToGuess: [';', ',', '\t', '|'] })
-  const all = (res.data as string[][]).map((r) => r.map((c) => (c ?? '').trim()))
-  const delimiter = res.meta.delimiter
+  return tableFromRows(res.data as string[][], res.meta.delimiter, 'csv')
+}
+
+/**
+ * Finds the real header row in a grid of cells — many exports start with a few lines
+ * of account info ("Сметка: BG12...", "Период: ...") before the table.
+ */
+export function tableFromRows(grid: string[][], delimiter: string, source: TableSource): ParsedTable {
+  const all = grid.map((r) => r.map((c) => (c ?? '').trim()))
 
   // The table width is the most common row width (ignoring narrow preamble lines).
   const widths = new Map<number, number>()
@@ -67,7 +74,7 @@ export function parseTable(text: string): ParsedTable {
       ? all[headerIndex].map((h, i) => h || `#${i + 1}`)
       : Array.from({ length: width }, (_, i) => `#${i + 1}`)
   const rows = all.slice(dataStart).filter((r) => r.some(Boolean) && r.length >= Math.min(3, width))
-  return { delimiter, headerIndex, headers, rows }
+  return { source, delimiter, headerIndex, headers, rows }
 }
 
 export function headerSignature(headers: string[]): string {
@@ -214,7 +221,8 @@ export function mapRows(table: ParsedTable, m: ColumnMapping): { rows: MappedRow
     }
     if (m.invertSign) value = -value
 
-    const parts = [raw[m.description], ...m.descriptionExtra.map((j) => raw[j])].map((s) => (s ?? '').trim()).filter(Boolean)
+    // Counterparty first: it names the merchant more cleanly than the payment reference.
+    const parts = [...m.descriptionExtra.map((j) => raw[j]), raw[m.description]].map((s) => (s ?? '').trim()).filter(Boolean)
     const description = [...new Set(parts)].join(' · ') || '—'
 
     let currency = 'EUR'
