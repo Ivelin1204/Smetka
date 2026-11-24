@@ -8,7 +8,7 @@ const PREFIXES = [
 ]
 // Unicode-aware word boundaries: \b does not work with Cyrillic.
 const LEGAL = /(?<![\p{L}\p{N}])(EOOD|OOD|AD|EAD|LTD|GMBH|INC|LLC|ЕООД|ООД|АД|ЕАД|ЕТ|SA|SRL|BV)(?![\p{L}\p{N}])\.?/gu
-const COUNTRY_CITY = /(?<![\p{L}\p{N}])(BGR|BG|БЪЛГАРИЯ|BULGARIA|SOFIA|СОФИЯ|PLOVDIV|ПЛОВДИВ|VARNA|ВАРНА|BURGAS|БУРГАС|IE|LU|NL|GB|US|CY|EE|SE|FR|DE|IT|ES|AT|LT|TALLINN|STOCKHOLM|AMSTERDAM|DUBLIN|LUXEMBOURG|LONDON|SAN FRANCISCO|SUBSCR|SUBSCRIPTION)(?![\p{L}\p{N}])/gu
+const COUNTRY_CITY = /(?<![\p{L}\p{N}])(BGR|BG|БЪЛГАРИЯ|BULGARIA|BALGARIYA|BALGARIA|SOFIA|СОФИЯ|PLOVDIV|ПЛОВДИВ|VARNA|ВАРНА|BURGAS|БУРГАС|IE|LU|NL|GB|US|CY|EE|SE|FR|DE|IT|ES|AT|LT|TALLINN|STOCKHOLM|AMSTERDAM|DUBLIN|LUXEMBOURG|LONDON|SAN FRANCISCO|SUBSCR|SUBSCRIPTION|SUB)(?![\p{L}\p{N}])/gu
 // Web domains: "NETFLIX.COM/BILL" → "NETFLIX"
 const DOMAIN = /\.(COM|EU|BG|NET|IO|ORG|AI|CO)(\/\S*)?(?![\p{L}\p{N}])/gu
 
@@ -37,6 +37,8 @@ export function extractMerchant(desc: string): string {
       }
     }
   }
+  // Card terminals often append "-CITY-CC": "BILLA 316 02-PLOVDIV-BG".
+  s = s.replace(/-[\p{L}\d .]+-\p{L}{2}$/u, ' ')
   s = s
     .replace(DOMAIN, ' ')
     .replace(LEGAL, ' ')
@@ -45,7 +47,7 @@ export function extractMerchant(desc: string): string {
     .replace(/\s+/g, ' ')
     .trim()
   // Drop reference codes like "P2F8A9" or "FR2847" — letters and digits mixed.
-  const words = s.split(' ').filter((w) => (w.length > 1 || /\d/.test(w)) && !(w.length >= 5 && /\d/.test(w) && /\p{L}/u.test(w)))
+  const words = s.split(' ').filter((w) => w.length > 1 && !/^\d+$/.test(w) && !(w.length >= 5 && /\d/.test(w) && /\p{L}/u.test(w)))
   const picked = words.slice(0, 3).join(' ') || normalizeDescription(desc).slice(0, 24)
   return titleCase(picked)
 }

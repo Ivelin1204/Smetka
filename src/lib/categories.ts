@@ -32,10 +32,10 @@ export function categoryKind(id: string) {
  * because bank exports use either depending on the terminal.
  */
 const BUILTIN: Record<string, string[]> = {
-  groceries: ['LIDL', 'ЛИДЛ', 'KAUFLAND', 'КАУФЛАНД', 'BILLA', 'БИЛА', 'FANTASTICO', 'ФАНТАСТИКО', 'T MARKET', 'Т МАРКЕТ', 'CBA', 'METRO CASH', 'ЛЕКСИ', 'ABC MARKET', 'ШЕЙ', 'ХЛЯБ', 'БАКАЛИЯ'],
-  dining: ['GLOVO', 'FOODPANDA', 'TAKEAWAY', 'HAPPY', 'ХЕПИ', 'MCDONALD', 'KFC', 'STARBUCKS', 'COSTA COFFEE', 'DOMINO', 'RESTAURANT', 'РЕСТОРАНТ', 'CAFE', 'КАФЕ', 'COFFEE', 'PIZZA', 'ПИЦА', 'BISTRO', 'БИСТРО', 'WOLT'],
+  groceries: ['LIDL', 'LIDAL', 'ЛИДЛ', 'KAUFLAND', 'КАУФЛАНД', 'BILLA', 'БИЛА', 'FANTASTICO', 'ФАНТАСТИКО', 'T MARKET', 'Т МАРКЕТ', 'CBA', 'METRO CASH', 'ЛЕКСИ', 'ABC MARKET', 'ШЕЙ', 'ХЛЯБ', 'БАКАЛИЯ'],
+  dining: ['AMREST', 'GLOVO', 'FOODPANDA', 'TAKEAWAY', 'HAPPY', 'ХЕПИ', 'MCDONALD', 'KFC', 'STARBUCKS', 'COSTA COFFEE', 'DOMINO', 'RESTAURANT', 'РЕСТОРАНТ', 'CAFE', 'КАФЕ', 'COFFEE', 'PIZZA', 'ПИЦА', 'BISTRO', 'БИСТРО', 'WOLT'],
   transport: ['BOLT', 'UBER', 'YELLOW', 'ЦЕНТЪР ЗА ГРАДСКА МОБИЛНОСТ', 'SOFIA METRO', 'МЕТРОПОЛИТЕН', 'PARKING', 'ПАРКИНГ', 'BDZ', 'БДЖ', 'VIGNETTE', 'ВИНЕТКА', 'BGTOLL', 'TAXI', 'ТАКСИ', 'SPARK'],
-  fuel: ['SHELL', 'OMV', 'LUKOIL', 'ЛУКОЙЛ', 'EKO', 'ЕКО БЪЛГАРИЯ', 'PETROL', 'ПЕТРОЛ', 'RODNA ZEMYA', 'РОДНА ЗЕМЯ', 'GAZPROM', 'ГАЗПРОМ'],
+  fuel: ['SHELL', 'OMV', 'LUKOIL', 'LUKOYL', 'ЛУКОЙЛ', 'KARGO OIL', 'EKO', 'ЕКО БЪЛГАРИЯ', 'PETROL', 'ПЕТРОЛ', 'RODNA ZEMYA', 'РОДНА ЗЕМЯ', 'GAZPROM', 'ГАЗПРОМ'],
   housing: ['НАЕМ', 'RENT', 'ВХОДНА ТАКСА', 'ДОМОУПРАВИТЕЛ', 'IKEA', 'ИКЕА', 'JYSK', 'PRAKTIKER', 'ПРАКТИКЕР', 'MR BRICOLAGE', 'МР. БРИКОЛАЖ'],
   utilities: ['ELECTROHOLD', 'ЕЛЕКТРОХОЛД', 'EVN', 'ЕВН', 'ENERGO-PRO', 'ЕНЕРГО-ПРО', 'CEZ', 'ЧЕЗ', 'СОФИЙСКА ВОДА', 'SOFIYSKA VODA', 'ВИК', 'ТОПЛОФИКАЦИЯ', 'TOPLOFIKACIA', 'OVERGAS', 'ОВЕРГАЗ', 'ТЕХЕМ', 'TECHEM'],
   telecom: ['A1 BULGARIA', 'A1 БЪЛГАРИЯ', 'A1', 'А1', 'YETTEL', 'ЙЕТЕЛ', 'VIVACOM', 'ВИВАКОМ', 'TELENOR', 'BULSATCOM', 'БУЛСАТКОМ'],
@@ -44,11 +44,11 @@ const BUILTIN: Record<string, string[]> = {
   health: ['АПТЕКА', 'APTEKA', 'PHARMACY', 'SOPHARMA', 'СОФАРМА', 'МАРЕШКИ', 'MARESHKI', 'SUBRA', 'СУБРА', 'ЛАБОРАТОРИЯ', 'ЦИБАЛАБ', 'CIBALAB', 'БОЛНИЦА', 'HOSPITAL', 'ДЕНТАЛ', 'DENTAL', 'МЕДИЦИНСКИ ЦЕНТЪР', 'ACIBADEM', 'АДЖИБАДЕМ'],
   fun: ['CINEMA CITY', 'СИНЕМА СИТИ', 'ARENA', 'BILETI.BG', 'EVENTIM', 'ЕВЕНТИМ', 'TICKETSTATION', 'BOWLING', 'БОУЛИНГ', 'MUSEUM', 'МУЗЕЙ', 'THEATRE', 'ТЕАТЪР'],
   travel: ['RYANAIR', 'WIZZ', 'BULGARIA AIR', 'BOOKING.COM', 'AIRBNB', 'HOTEL', 'ХОТЕЛ', 'FLIXBUS', 'UNION IVKONI', 'ЮНИОН ИВКОНИ', 'SKYSCANNER'],
-  cash: ['ATM', 'БАНКОМАТ', 'ТЕГЛЕНЕ НА ПАРИ', 'CASH WITHDRAWAL', 'ТЕГЛЕНЕ В БРОЙ'],
+  cash: ['ATM', 'БАНКОМАТ', 'BANKOMAT', 'ТЕГЛЕНЕ НА ПАРИ', 'CASH WITHDRAWAL', 'ТЕГЛЕНЕ В БРОЙ'],
   fees: ['ТАКСА ОБСЛУЖВАНЕ', 'ТАКСА ЗА', 'МЕСЕЧНА ТАКСА', 'BANK FEE', 'SERVICE FEE', 'КОМИСИОНА', 'ЛИХВА ПО КРЕДИТ'],
   salary: ['ЗАПЛАТА', 'SALARY', 'ВЪЗНАГРАЖДЕНИЕ', 'PAYROLL', 'ТРУДОВО'],
   'income-other': ['ВЪЗСТАНОВЯВАНЕ', 'REFUND', 'CASHBACK', 'ЛИХВА ПО ДЕПОЗИТ', 'INTEREST', 'ХОНОРАР', 'ФАКТУРА'],
-  transfer: ['TOP-UP', 'TOPUP', 'ЗАХРАНВАНЕ', 'МЕЖДУ СОБСТВЕНИ', 'OWN ACCOUNT', 'SAVINGS', 'СПЕСТОВН', 'TO POCKET', 'REVOLUT', 'ПРЕВОД КЪМ СОБСТВЕНА'],
+  transfer: ['PLASHTANE PO KARTOVA', 'ПЛАЩАНЕ ПО КАРТОВА', 'ПЛАЩАНЕ КЪМ КАРТАТА', 'ПОГАСЯВАНЕ НА КАРТА', 'TOP-UP', 'TOPUP', 'ЗАХРАНВАНЕ', 'МЕЖДУ СОБСТВЕНИ', 'OWN ACCOUNT', 'SAVINGS', 'СПЕСТОВН', 'TO POCKET', 'REVOLUT', 'ПРЕВОД КЪМ СОБСТВЕНА'],
 }
 
 export const BUILTIN_RULES: Rule[] = Object.entries(BUILTIN).flatMap(([categoryId, patterns]) =>

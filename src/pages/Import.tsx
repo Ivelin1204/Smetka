@@ -288,6 +288,7 @@ export default function ImportPage({ nav }: { nav: Nav }) {
               </span>
               {t('imp.invert')}
             </label>
+            {mapping.invertSign && mapping.amountMode === 'signed' && <p className="muted small invert-hint">{t('imp.invertHint')}</p>}
           </div>
           <p className="muted small note">{t('imp.eurNote')}</p>
         </div>

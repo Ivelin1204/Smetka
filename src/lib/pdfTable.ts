@@ -71,14 +71,6 @@ export function groupLines(items: PdfTextItem[]): Line[] {
   })
 }
 
-interface Column {
-  side: 'left' | 'right'
-  anchor: number
-  /** Left edge used for ordering columns */
-  pos: number
-  count: number
-}
-
 function cluster(values: number[], tol: number): { center: number; count: number }[] {
   const s = [...values].sort((a, b) => a - b)
   const out: { sum: number; count: number; last: number }[] = []
@@ -158,47 +150,43 @@ export function pdfItemsToTable(items: PdfTextItem[]): PdfTable {
 
   if (!rows.length) return { headers: [], rows: [], hasHeader: false, pages, textItems: items.length }
 
-  // Column anchors: left edges for text/dates, right edges for amounts.
-  const minSupport = rows.length < 4 ? 1 : Math.max(2, Math.round(rows.length * 0.04))
-  const leftVals: number[] = []
-  const rightVals: number[] = []
-  const rightWidths: number[] = []
-  for (const r of rows)
-    for (const c of r.cells) {
-      if (kindOf(c.text) === 'amount') {
-        rightVals.push(c.x1)
-        rightWidths.push(c.x1 - c.x0)
-      } else leftVals.push(c.x0)
+  // Columns are the vertical strips the rows share. Instead of guessing alignment (left, right or
+  // centred), look for gutters: x-ranges that no cell in any row touches.
+  const cellsOf = rows.flatMap((r) => r.cells)
+  const SCALE = 2 // half-point resolution keeps 1pt gutters
+  const minX = Math.floor(Math.min(...cellsOf.map((c) => c.x0)) * SCALE)
+  const maxX = Math.ceil(Math.max(...cellsOf.map((c) => c.x1)) * SCALE)
+  const cover = new Uint16Array(maxX - minX + 1)
+  for (const c of cellsOf) for (let x = Math.floor(c.x0 * SCALE); x < Math.ceil(c.x1 * SCALE); x++) cover[x - minX]++
+  // In longer statements one stray row (an overflowing description) may cross a gutter.
+  const allowed = rows.length >= 20 ? 1 : 0
+  const columns: { x0: number; x1: number }[] = []
+  let open = -1
+  for (let i = 0; i <= cover.length; i++) {
+    const filled = i < cover.length && cover[i] > allowed
+    if (filled && open < 0) open = i
+    else if (!filled && open >= 0) {
+      columns.push({ x0: (open + minX) / SCALE, x1: (i + minX) / SCALE })
+      open = -1
     }
-  const numW = median(rightWidths) || h * 4
-  const columns: Column[] = [
-    ...cluster(leftVals, tol).filter((c) => c.count >= minSupport).map((c) => ({ side: 'left' as const, anchor: c.center, pos: c.center, count: c.count })),
-    ...cluster(rightVals, tol).filter((c) => c.count >= minSupport).map((c) => ({ side: 'right' as const, anchor: c.center, pos: c.center - numW, count: c.count })),
-  ].sort((a, b) => a.pos - b.pos)
+  }
 
-  const columnFor = (c: Cell, kind: Kind): number => {
-    const side = kind === 'amount' ? 'right' : 'left'
-    const key = side === 'right' ? c.x1 : c.x0
-    let best = -1
-    let bestD = Infinity
+  const columnFor = (x0: number, x1: number): number => {
+    // Most horizontal overlap wins; otherwise the nearest column.
+    let best = 0
+    let bestScore = -Infinity
     columns.forEach((col, i) => {
-      if (col.side !== side) return
-      const d = Math.abs(col.anchor - key)
-      if (d < bestD) (best = i), (bestD = d)
+      const overlap = Math.min(x1, col.x1) - Math.max(x0, col.x0)
+      const score = overlap > 0 ? overlap : -Math.min(Math.abs(x0 - col.x1), Math.abs(col.x0 - x1))
+      if (score > bestScore) (best = i), (bestScore = score)
     })
-    if (best >= 0 && bestD <= tol * 2) return best
-    // Off-grid cell (e.g. a number inside the description): the column it starts in.
-    let idx = 0
-    columns.forEach((col, i) => {
-      if (col.pos <= c.x0 + tol) idx = i
-    })
-    return idx
+    return best
   }
 
   const toRow = (l: Line) => {
     const out = new Array<string>(columns.length).fill('')
     for (const c of l.cells) {
-      const i = columnFor(c, kindOf(c.text))
+      const i = columnFor(c.x0, c.x1)
       out[i] = out[i] ? `${out[i]} ${c.text}` : c.text
     }
     return out
@@ -228,18 +216,10 @@ export function pdfItemsToTable(items: PdfTextItem[]): PdfTable {
   let hasHeader = false
   if (headerLines.length) {
     const hdr = new Array<string>(columns.length).fill('')
+    // Header labels are often centred or wider than their column: match them by overlap.
     for (const l of headerLines)
       for (const c of l.cells) {
-        // Header labels are positioned loosely: pick the column whose span covers the label's centre.
-        const mid = (c.x0 + c.x1) / 2
-        let i = 0
-        let bestD = Infinity
-        columns.forEach((col, j) => {
-          const lo = col.side === 'left' ? col.anchor : col.anchor - numW
-          const hi = col.side === 'left' ? (columns[j + 1]?.pos ?? col.anchor + numW * 2) : col.anchor
-          const d = mid < lo ? lo - mid : mid > hi ? mid - hi : 0
-          if (d < bestD) (i = j), (bestD = d)
-        })
+        const i = columnFor(c.x0, c.x1)
         hdr[i] = hdr[i] ? `${hdr[i]} ${c.text}` : c.text
       }
     if (hdr.filter(Boolean).length >= 2) {

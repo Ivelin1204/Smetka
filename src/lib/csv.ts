@@ -100,10 +100,35 @@ function ratio(values: string[], test: (s: string) => boolean) {
   return values.length ? values.filter(test).length / values.length : 0
 }
 
+const DEBIT_MARKS = new Set(['Д', 'D', 'DT', 'DR', 'DEBIT', 'ДЕБИТ', 'ДТ', '-', 'OUT', 'РАЗХОД'])
+const CREDIT_MARKS = new Set(['К', 'C', 'CT', 'CR', 'CREDIT', 'КРЕДИТ', 'КТ', '+', 'IN', 'ПРИХОД'])
+// Checked first: "Плащане към картата" (paying the card off) is money in, though it says "плащане".
+const CREDIT_WORDS = /(възстановяв|връщане|сторно|reversal|refund|cashback|входящ|получен|постъпл|deposit|top.?up|захранване|плащане към карта|погасяване|вноска|кредитиране|заплата|salary|лихва|interest)/i
+const DEBIT_WORDS = /(покупк|плащане|теглене|такса|комисион|изходящ|превод|purchase|payment|withdraw|fee|charge|debit|дебит|\bpos\b|\batm\b|card)/i
+
+/**
+ * Reads a debit/credit column by meaning: single-letter markers ("Д", "CR") as well as
+ * transaction types written out ("Покупка", "Възстановяване", "Теглене в брой").
+ */
+export function directionOf(value: string): 'debit' | 'credit' | null {
+  const v = value.trim()
+  if (!v) return null
+  const u = v.toUpperCase()
+  if (CREDIT_MARKS.has(u)) return 'credit'
+  if (DEBIT_MARKS.has(u)) return 'debit'
+  if (CREDIT_WORDS.test(v)) return 'credit'
+  if (DEBIT_WORDS.test(v)) return 'debit'
+  return null
+}
+
+const isTime = (s: string) => /^\d{1,2}:\d{2}(:\d{2})?$/.test(s.trim())
+const ACCOUNT_CCY = /(сметка|сметката|account|осчетов|billing|settle|\bEUR\b|\bBGN\b|евро|лева)/i
+
 /** Best-effort guess of what each column means, using header names first and cell content second. */
 export function guessMapping(table: ParsedTable): ColumnMapping {
   const { headers, rows } = table
   const n = headers.length
+  const all = [...Array(n).keys()]
   const idx = (re: RegExp, except: number[] = []) => headers.findIndex((h, i) => !except.includes(i) && re.test(h))
   const contentIdx = (test: (s: string) => boolean, except: number[] = [], min = 0.8) => {
     for (let i = 0; i < n; i++) if (!except.includes(i) && ratio(column(rows, i), test) >= min) return i
@@ -115,43 +140,69 @@ export function guessMapping(table: ParsedTable): ColumnMapping {
 
   let debit = idx(H.debit, [date])
   let credit = idx(H.credit, [date, debit])
-  let amount = idx(H.amount, [date, debit, credit])
-  const currency = idx(H.currency, [date, amount, debit, credit])
-  const direction = idx(H.direction, [date, amount, debit, credit, currency])
+  if (debit >= 0 && ratio(column(rows, debit), looksLikeAmount) < 0.2) debit = -1
+  if (credit >= 0 && ratio(column(rows, credit), looksLikeAmount) < 0.2) credit = -1
 
-  if (amount >= 0 && ratio(column(rows, amount), looksLikeAmount) < 0.6) amount = -1
-  if (debit >= 0 && ratio(column(rows, debit), (s) => looksLikeAmount(s)) < 0.2) debit = -1
-  if (credit >= 0 && ratio(column(rows, credit), (s) => looksLikeAmount(s)) < 0.2) credit = -1
+  // Statements often give two amounts: in the original currency and in the account's currency.
+  // The account currency is what actually left the account.
+  const amountCols = all.filter((i) => ![date, debit, credit].includes(i) && H.amount.test(headers[i]) && ratio(column(rows, i), looksLikeAmount) >= 0.6)
+  let amount = amountCols.find((i) => ACCOUNT_CCY.test(headers[i])) ?? amountCols[0] ?? -1
+  const accountAmount = amount >= 0 && amountCols.length > 1 && ACCOUNT_CCY.test(headers[amount])
+
+  let currency = idx(H.currency, [date, amount, debit, credit])
+  if (currency >= 0 && ratio(column(rows, currency), (s) => /^[\p{L}€$.]{1,4}$/u.test(s.trim())) < 0.8) currency = -1
+  let currencyMode: ColumnMapping['currencyMode'] = currency >= 0 ? 'column' : 'auto-euro-switch'
+  if (accountAmount) {
+    // The currency column describes the original amount, not this one.
+    const h = headers[amount]
+    currencyMode = /EUR|евро/i.test(h) ? 'EUR' : /BGN|лв|лева/i.test(h) ? 'BGN' : 'auto-euro-switch'
+  }
 
   let amountMode: ColumnMapping['amountMode'] = 'signed'
+  let direction = -1
   if (amount < 0 && debit >= 0 && credit >= 0) amountMode = 'split'
   else {
-    if (amount < 0) amount = contentIdx(looksLikeAmount, [date, currency], 0.8)
-    if (direction >= 0 && amount >= 0) {
-      const vals = column(rows, direction)
-      const unsigned = column(rows, amount).every((v) => !v.trim().startsWith('-'))
-      if (unsigned && vals.length && new Set(vals.map((v) => v.toUpperCase())).size <= 4) amountMode = 'direction'
+    if (amount < 0) amount = contentIdx(looksLikeAmount, [date, currency, debit, credit], 0.8)
+    if (amount >= 0) {
+      const vals = column(rows, amount)
+      const unsigned = vals.filter((v) => /^[-−(]|-$/.test(v.trim())).length <= vals.length * 0.05
+      // A column whose values read as debit/credit — "Д/К" markers or words like "Покупка".
+      const readable = (i: number) => {
+        const v = column(rows, i)
+        return v.length > 0 && new Set(v.map((x) => x.toUpperCase())).size <= 12 && ratio(v, (x) => directionOf(x) !== null) >= 0.8
+      }
+      const candidates = all.filter((i) => ![date, amount, debit, credit, currency].includes(i) && readable(i))
+      direction = candidates.find((i) => H.direction.test(headers[i])) ?? candidates[0] ?? -1
+      if (unsigned && direction >= 0) amountMode = 'direction'
+      else direction = -1
     }
   }
 
-  const used = [date, amount, debit, credit, currency, direction]
+  // Card statements list spending as plain positive numbers.
+  let invertSign = false
+  if (amountMode === 'signed' && amount >= 0) {
+    const vals = column(rows, amount, 200).map((v) => parseAmount(v)).filter((v): v is number => v != null)
+    invertSign = vals.length >= 3 && vals.filter((v) => v > 0).length >= vals.length * 0.95
+  }
+
+  const used = [date, amount, debit, credit, currency, direction, ...amountCols]
+  const textual = (i: number) => {
+    const v = column(rows, i)
+    return ratio(v, (x) => isTime(x) || looksLikeDate(x) || looksLikeAmount(x)) < 0.5 && ratio(v, (x) => /\p{L}{2}/u.test(x)) >= 0.5
+  }
   let description = idx(H.description, used)
+  if (description >= 0 && !textual(description)) description = -1
   if (description < 0) {
     // Longest average text column wins.
-    let best = -1
     let bestLen = 0
-    for (let i = 0; i < n; i++) {
-      if (used.includes(i)) continue
+    for (const i of all) {
+      if (used.includes(i) || !textual(i)) continue
       const vals = column(rows, i)
       const avg = vals.reduce((s, v) => s + v.length, 0) / (vals.length || 1)
-      if (avg > bestLen && ratio(vals, looksLikeAmount) < 0.5) {
-        best = i
-        bestLen = avg
-      }
+      if (avg > bestLen) (description = i), (bestLen = avg)
     }
-    description = best
   }
-  const counterparty = idx(H.counterparty, [...used, description])
+  const counterparty = all.find((i) => !used.includes(i) && i !== description && H.counterparty.test(headers[i]) && textual(i)) ?? -1
 
   const amountSamples = [amount, debit, credit].filter((i) => i >= 0).flatMap((i) => column(rows, i, 80))
   return {
@@ -163,12 +214,12 @@ export function guessMapping(table: ParsedTable): ColumnMapping {
     debit,
     credit,
     direction,
-    debitMarkers: ['Д', 'D', 'DT', 'DEBIT', 'ДЕБИТ', 'DR', '-', 'OUT', 'РАЗХОД'],
+    debitMarkers: [...DEBIT_MARKS],
     currency,
-    currencyMode: currency >= 0 ? 'column' : 'auto-euro-switch',
+    currencyMode,
     dateFormat: detectDateFormat(column(rows, date, 80)) ?? 'DD.MM.YYYY',
     decimal: detectDecimal(amountSamples),
-    invertSign: false,
+    invertSign,
   }
 }
 
@@ -211,8 +262,10 @@ export function mapRows(table: ParsedTable, m: ColumnMapping): { rows: MappedRow
     } else {
       value = parseAmount(raw[m.amount], m.decimal)
       if (value != null && m.amountMode === 'direction') {
-        const dir = (raw[m.direction] ?? '').trim().toUpperCase()
-        value = debitSet.has(dir) ? -Math.abs(value) : Math.abs(value)
+        const cell = raw[m.direction] ?? ''
+        const dir = debitSet.has(cell.trim().toUpperCase()) ? 'debit' : directionOf(cell)
+        // Unknown types count as spending; money in is always named ("Възстановяване", "К", "Входящ").
+        value = dir === 'credit' ? Math.abs(value) : -Math.abs(value)
       }
     }
     if (value == null) {

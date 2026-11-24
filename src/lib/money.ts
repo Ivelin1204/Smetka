@@ -1,3 +1,4 @@
+import { looksLikeDate } from './dates'
 import type { DecimalSep } from './types'
 
 /** Fixed, irrevocable rate set by the EU Council (8 July 2025). Bulgaria adopted the euro on 1 Jan 2026. */
@@ -94,6 +95,8 @@ export function detectDecimal(samples: string[]): DecimalSep {
 export function looksLikeAmount(s: string): boolean {
   const t = s.trim()
   if (!t || t.length > 24) return false
+  // "25.11.2026" parses as 25112026 — a date is never an amount.
+  if (/^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}/.test(t) || looksLikeDate(t)) return false
   if (/[a-zа-я]{4,}/i.test(t.replace(/лв|bgn|eur/gi, ''))) return false
   return parseAmount(t) !== null
 }

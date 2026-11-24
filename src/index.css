@@ -1418,6 +1418,10 @@ code {
 .note {
   margin-top: 16px;
 }
+.invert-hint {
+  grid-column: 1 / -1;
+  margin-top: -6px;
+}
 .preview {
   display: flex;
   flex-direction: column;
