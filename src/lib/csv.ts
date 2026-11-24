@@ -121,6 +121,7 @@ export function directionOf(value: string): 'debit' | 'credit' | null {
   return null
 }
 
+const LEADING_DATETIME = /^(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{1,2}-\d{1,2})(\s*г\.)?([ T,]+\d{1,2}:\d{2}(:\d{2})?)?\s*/
 const isTime = (s: string) => /^\d{1,2}:\d{2}(:\d{2})?$/.test(s.trim())
 const ACCOUNT_CCY = /(сметка|сметката|account|осчетов|billing|settle|\bEUR\b|\bBGN\b|евро|лева)/i
 
@@ -301,9 +302,12 @@ export function mapRows(table: ParsedTable, m: ColumnMapping): { rows: MappedRow
 
     // Counterparty first: it names the merchant more cleanly than the payment reference.
     const parts = [...m.descriptionExtra.map((j) => raw[j]), raw[m.description]].map((s) => (s ?? '').trim()).filter(Boolean)
-    // A date or time already has its own field — it only clutters the description.
-    const useful = parts.filter((p) => !isTime(p) && !looksLikeDate(p) && !looksLikeAmount(p))
-    const description = [...new Set(useful.length ? useful : parts)].join(' · ') || '—'
+    // A date or time already has its own field — it only clutters the description. That includes a
+    // date glued to the front of the text ("24.11.2026 15:55 LIDL…").
+    const useful = parts
+      .map((p) => p.replace(LEADING_DATETIME, '').trim())
+      .filter((p) => p && !isTime(p) && !looksLikeDate(p) && !looksLikeAmount(p))
+    const description = [...new Set(useful)].join(' · ') || '—'
 
     let currency = 'EUR'
     if (m.currencyMode === 'column') currency = normalizeCurrency(raw[m.currency])

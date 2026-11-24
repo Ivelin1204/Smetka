@@ -174,3 +174,17 @@ describe('description stays clean', () => {
     expect(k.map((c) => c.amount)).toEqual([false, false, false, true])
   })
 })
+
+describe('date glued to the description', () => {
+  it('strips it, keeping the merchant', () => {
+    const table: ParsedTable = { source: 'pdf', delimiter: '', headerIndex: 0, headers: ['Дата', 'Описание', 'Сума'], rows: [['25.11.2026', '24.11.2026 15:55 LIDAL BALGARIYA EOOD-PLEVEN-BG', '-4,33']] }
+    const m = { ...guessMapping(table), description: 1 }
+    expect(mapRows(table, m).rows[0].description).toBe('LIDAL BALGARIYA EOOD-PLEVEN-BG')
+  })
+
+  it('gives "—" rather than a date when a description has nothing else', () => {
+    const table: ParsedTable = { source: 'pdf', delimiter: '', headerIndex: 0, headers: ['Дата', 'Дата', 'Сума'], rows: [['25.11.2026', '24.11.2026 15:55', '-4,33']] }
+    const m = { ...guessMapping(table), description: 1 }
+    expect(mapRows(table, m).rows[0].description).toBe('—')
+  })
+})

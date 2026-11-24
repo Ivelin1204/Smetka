@@ -169,14 +169,27 @@ export default function ImportPage({ nav }: { nav: Nav }) {
   }
 
   const { table } = loaded
-  // Each field only offers columns whose content fits it, plus whatever is currently chosen.
+  // Each column has at most one role. A field offers only columns whose content fits it and that no
+  // other field is using — so the same date can't end up in two places.
+  type Role = 'date' | 'description' | 'extra' | 'amount' | 'debit' | 'credit' | 'direction' | 'currency'
+  const roles: Record<Role, number> = {
+    date: mapping.date,
+    description: mapping.description,
+    extra: mapping.descriptionExtra[0] ?? -1,
+    amount: mapping.amountMode === 'split' ? -1 : mapping.amount,
+    debit: mapping.amountMode === 'split' ? mapping.debit : -1,
+    credit: mapping.amountMode === 'split' ? mapping.credit : -1,
+    direction: mapping.amountMode === 'direction' ? mapping.direction : -1,
+    currency: mapping.currencyMode === 'column' ? mapping.currency : -1,
+  }
   const kinds = columnKinds(table)
-  const cols = (fits: (k: ColumnKind) => boolean, current: number, optional = false): Option<number>[] => {
-    const picked = table.headers.map((_, i) => i).filter((i) => fits(kinds[i]) || i === current)
-    const list = picked.length ? picked : table.headers.map((_, i) => i)
+  const cols = (role: Role, fits: (k: ColumnKind) => boolean, optional = false): Option<number>[] => {
+    const current = roles[role]
+    const taken = new Set((Object.keys(roles) as Role[]).filter((r) => r !== role).map((r) => roles[r]))
+    const list = table.headers.map((_, i) => i).filter((i) => i === current || (fits(kinds[i]) && !taken.has(i)))
     const dup = (i: number) => list.filter((j) => table.headers[j] === table.headers[i]).length > 1
     return [
-      ...(optional ? [{ value: -1, label: t('imp.none') }] : []),
+      ...(optional || current < 0 ? [{ value: -1, label: t('imp.none') }] : []),
       ...list.map((i) => ({
         value: i,
         // Same header twice ("Дата", "Дата"): tell them apart by column number.
@@ -185,7 +198,6 @@ export default function ImportPage({ nav }: { nav: Nav }) {
       })),
     ]
   }
-  const used = [mapping.date, mapping.amount, mapping.debit, mapping.credit, mapping.direction, mapping.currency]
   const set = <K extends keyof ColumnMapping>(k: K, v: ColumnMapping[K]) => setMapping({ ...mapping, [k]: v })
   const preview = mapped.rows.slice(0, 8)
 
@@ -234,15 +246,15 @@ export default function ImportPage({ nav }: { nav: Nav }) {
           <h2>{t('imp.mapping')}</h2>
           <div className="form">
             <Field label={t('imp.colDate')}>
-              <Select value={mapping.date} options={cols((k) => k.date, mapping.date)} onChange={(v) => set('date', v)} />
+              <Select value={mapping.date} options={cols('date', (k) => k.date)} onChange={(v) => set('date', v)} />
             </Field>
             <Field label={t('imp.colDesc')}>
-              <Select value={mapping.description} options={cols((k) => k.text, mapping.description)} onChange={(v) => set('description', v)} />
+              <Select value={mapping.description} options={cols('description', (k) => k.text)} onChange={(v) => set('description', v)} />
             </Field>
             <Field label={t('imp.colExtra')}>
               <Select
                 value={mapping.descriptionExtra[0] ?? -1}
-                options={cols((k) => k.text, mapping.descriptionExtra[0] ?? -1, true).filter((o) => o.value === -1 || o.value === mapping.descriptionExtra[0] || (o.value !== mapping.description && !used.includes(o.value)))}
+                options={cols('extra', (k) => k.text, true)}
                 onChange={(v) => set('descriptionExtra', v >= 0 ? [v] : [])}
               />
             </Field>
@@ -260,20 +272,20 @@ export default function ImportPage({ nav }: { nav: Nav }) {
             {mapping.amountMode === 'split' ? (
               <>
                 <Field label={t('imp.colDebit')}>
-                  <Select value={mapping.debit} options={cols((k) => k.amount, mapping.debit)} onChange={(v) => set('debit', v)} />
+                  <Select value={mapping.debit} options={cols('debit', (k) => k.amount)} onChange={(v) => set('debit', v)} />
                 </Field>
                 <Field label={t('imp.colCredit')}>
-                  <Select value={mapping.credit} options={cols((k) => k.amount, mapping.credit)} onChange={(v) => set('credit', v)} />
+                  <Select value={mapping.credit} options={cols('credit', (k) => k.amount)} onChange={(v) => set('credit', v)} />
                 </Field>
               </>
             ) : (
               <>
                 <Field label={t('imp.colAmount')}>
-                  <Select value={mapping.amount} options={cols((k) => k.amount, mapping.amount)} onChange={(v) => set('amount', v)} />
+                  <Select value={mapping.amount} options={cols('amount', (k) => k.amount)} onChange={(v) => set('amount', v)} />
                 </Field>
                 {mapping.amountMode === 'direction' && (
                   <Field label={t('imp.colDir')}>
-                    <Select value={mapping.direction} options={cols((k) => k.direction, mapping.direction)} onChange={(v) => set('direction', v)} />
+                    <Select value={mapping.direction} options={cols('direction', (k) => k.direction)} onChange={(v) => set('direction', v)} />
                   </Field>
                 )}
               </>
@@ -305,7 +317,7 @@ export default function ImportPage({ nav }: { nav: Nav }) {
             </Field>
             {mapping.currencyMode === 'column' && (
               <Field label={t('imp.colCurrency')}>
-                <Select value={mapping.currency} options={cols((k) => k.currency, mapping.currency)} onChange={(v) => set('currency', v)} />
+                <Select value={mapping.currency} options={cols('currency', (k) => k.currency)} onChange={(v) => set('currency', v)} />
               </Field>
             )}
             <label className="check">
