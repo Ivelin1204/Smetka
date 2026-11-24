@@ -11,7 +11,7 @@
 [data-theme='dark'] {
   color-scheme: dark;
   --bg: #0f1014;
-  --bg-glow: rgba(255, 107, 74, 0.08);
+  --bg-glow: rgba(124, 108, 255, 0.11);
   --surface: #17181e;
   --surface-2: #1e2028;
   --surface-3: #262833;
@@ -21,8 +21,9 @@
   --muted: #8b8e99;
   --grid: rgba(255, 255, 255, 0.06);
   --hover: rgba(255, 255, 255, 0.04);
-  --accent: #ff6b4a;
-  --accent-soft: rgba(255, 107, 74, 0.14);
+  --accent: #8f80ff;
+  --accent-strong: #6f5cff;
+  --accent-soft: rgba(143, 128, 255, 0.15);
   --positive: #3ddc97;
   --negative: #ff5d6c;
   --warning: #ffb547;
@@ -32,19 +33,20 @@
 
 [data-theme='light'] {
   color-scheme: light;
-  --bg: #f6f3ee;
-  --bg-glow: rgba(255, 107, 74, 0.1);
+  --bg: #f4f4f8;
+  --bg-glow: rgba(91, 71, 232, 0.09);
   --surface: #ffffff;
-  --surface-2: #f6f4f0;
-  --surface-3: #ece8e1;
-  --border: rgba(20, 18, 14, 0.08);
-  --border-strong: rgba(20, 18, 14, 0.14);
-  --text: #191714;
-  --muted: #77736c;
-  --grid: rgba(20, 18, 14, 0.07);
-  --hover: rgba(20, 18, 14, 0.035);
-  --accent: #f0552f;
-  --accent-soft: rgba(240, 85, 47, 0.12);
+  --surface-2: #f3f2f8;
+  --surface-3: #e8e7f0;
+  --border: rgba(24, 22, 40, 0.08);
+  --border-strong: rgba(24, 22, 40, 0.14);
+  --text: #17161f;
+  --muted: #6f6e80;
+  --grid: rgba(24, 22, 40, 0.07);
+  --hover: rgba(24, 22, 40, 0.035);
+  --accent: #5b47e8;
+  --accent-strong: #5b47e8;
+  --accent-soft: rgba(91, 71, 232, 0.1);
   --positive: #12a66a;
   --negative: #e23b4c;
   --warning: #d48806;
@@ -755,12 +757,12 @@ code {
   margin-top: 18px;
 }
 .btn.primary {
-  background: var(--accent);
+  background: var(--accent-strong);
   color: #fff;
-  box-shadow: 0 8px 22px -10px var(--accent);
+  box-shadow: 0 8px 22px -10px var(--accent-strong);
 }
 .btn.primary:hover:not(:disabled) {
-  box-shadow: 0 12px 28px -10px var(--accent);
+  box-shadow: 0 12px 28px -10px var(--accent-strong);
   transform: translateY(-1px);
 }
 .btn.ghost {
@@ -990,8 +992,8 @@ code {
   transition: background-color 0.2s, border-color 0.2s, color 0.2s;
 }
 .check input:checked + .box {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
   color: #fff;
 }
 .check input:focus-visible + .box {

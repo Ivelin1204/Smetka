@@ -111,7 +111,7 @@ export default function App() {
         <a className="brand" href="#overview">
           <span className="brand-mark">
             <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden>
-              <rect width="32" height="32" rx="9" fill="var(--accent)" />
+              <rect width="32" height="32" rx="9" fill="var(--accent-strong)" />
               <path d="M9 21.5c1.6 1.4 3.9 2.1 6.6 2.1 3.7 0 6-1.7 6-4.2 0-5.6-11.6-3.2-11.6-8.3 0-2.2 2.1-3.7 5.3-3.7 2.3 0 4.2.6 5.6 1.8" stroke="#fff" strokeWidth="2.6" fill="none" strokeLinecap="round" />
             </svg>
           </span>
