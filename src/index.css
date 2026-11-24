@@ -307,6 +307,18 @@ code {
   border-radius: 0 3px 3px 0;
   background: var(--accent);
 }
+/* Import: the primary action. A full button in the sidebar, a raised round button in the mobile bar. */
+.import-cta {
+  height: 44px;
+  margin: -10px 4px -8px;
+  text-decoration: none;
+}
+.import-cta.on {
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 8px 22px -10px var(--accent-strong);
+}
+.nav-import {
+  display: none;
+}
 .sidebar-foot {
   margin-top: auto;
   display: flex;
@@ -1714,6 +1726,41 @@ code {
   }
   .nav-item.on::before {
     display: none;
+  }
+  .import-cta {
+    display: none;
+  }
+  .nav-import {
+    display: flex;
+    flex: 0 0 auto;
+    align-self: center;
+    justify-content: center;
+    width: 52px;
+    height: 52px;
+    margin: -22px 4px 0;
+    padding: 0;
+    border-radius: 18px;
+    background: var(--accent-strong);
+    color: #fff;
+    box-shadow: 0 10px 24px -8px var(--accent-strong), 0 0 0 4px var(--bg);
+    transition: transform 0.25s var(--ease-spring);
+  }
+  .nav-import:active {
+    transform: scale(0.94);
+  }
+  .nav-import span {
+    display: none !important;
+  }
+  .nav-import svg,
+  .nav-item.nav-import.on svg {
+    color: #fff;
+    width: 22px;
+    height: 22px;
+  }
+  .nav-item.nav-import.on,
+  .nav-item.nav-import:hover {
+    background: var(--accent-strong);
+    color: #fff;
   }
   .main {
     padding: 22px 16px 110px;

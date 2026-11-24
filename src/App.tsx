@@ -117,9 +117,20 @@ export default function App() {
           </span>
           <span className="brand-name">Smetka</span>
         </a>
+        {/* Importing is the main action, so it is a button of its own rather than a menu row. */}
+        <a href="#import" className={'btn primary import-cta' + (route === 'import' ? ' on' : '')} aria-current={route === 'import' ? 'page' : undefined}>
+          <Icon name="upload" size={18} />
+          {t('nav.importCta')}
+        </a>
         <nav className="nav">
           {NAV.map((n) => (
-            <a key={n.route} href={`#${n.route}`} className={'nav-item' + (route === n.route ? ' on' : '')} aria-current={route === n.route ? 'page' : undefined}>
+            <a
+              key={n.route}
+              href={`#${n.route}`}
+              className={'nav-item' + (n.route === 'import' ? ' nav-import' : '') + (route === n.route ? ' on' : '')}
+              aria-current={route === n.route ? 'page' : undefined}
+              aria-label={n.route === 'import' ? t('nav.importCta') : undefined}
+            >
               <Icon name={n.icon} size={19} />
               <span className="nav-long">{t(n.key)}</span>
               <span className="nav-short">{t(n.route === 'rules' ? 'nav.settingsShort' : n.key)}</span>
