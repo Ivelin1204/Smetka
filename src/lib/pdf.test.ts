@@ -74,7 +74,7 @@ describe('line grouping', () => {
 // Fictional card statement laid out like the user's bank (scripts/make-test-card-statement.py):
 // centred columns, two dates, a time column, a "Вид трансакция" column, two amounts, unsigned values.
 import card from './__fixtures__/card-statement.items.json'
-import { directionOf } from './csv'
+import { columnKinds, directionOf } from './csv'
 import { extractMerchant } from './categorize'
 import { looksLikeAmount } from './money'
 
@@ -147,5 +147,30 @@ describe('column meaning', () => {
     const m = guessMapping(table)
     expect(m.invertSign).toBe(true)
     expect(mapRows(table, m).rows.map((r) => r.amount)).toEqual([-12.4, -60, -18.9])
+  })
+})
+
+describe('description stays clean', () => {
+  const table: ParsedTable = {
+    source: 'pdf',
+    delimiter: '',
+    headerIndex: 0,
+    headers: ['Дата', 'Дата', 'Описание', 'Сума'],
+    rows: [
+      ['25.11.2026', '24.11.2026 15:55', 'LIDAL BALGARIYA EOOD-PLEVEN-BG', '-4,33'],
+      ['25.11.2026', '24.11.2026 15:54', 'KARGO OIL-PLEVEN-BG', '-39,99'],
+    ],
+  }
+
+  it('never joins a date or time into the description, even if chosen as extra', () => {
+    const m = { ...guessMapping(table), descriptionExtra: [1] }
+    expect(mapRows(table, m).rows.map((r) => r.description)).toEqual(['LIDAL BALGARIYA EOOD-PLEVEN-BG', 'KARGO OIL-PLEVEN-BG'])
+  })
+
+  it('knows which columns hold dates, text and amounts', () => {
+    const k = columnKinds(table)
+    expect(k.map((c) => c.date)).toEqual([true, true, false, false])
+    expect(k.map((c) => c.text)).toEqual([false, false, true, false])
+    expect(k.map((c) => c.amount)).toEqual([false, false, false, true])
   })
 })

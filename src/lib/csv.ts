@@ -124,6 +124,31 @@ export function directionOf(value: string): 'debit' | 'credit' | null {
 const isTime = (s: string) => /^\d{1,2}:\d{2}(:\d{2})?$/.test(s.trim())
 const ACCOUNT_CCY = /(сметка|сметката|account|осчетов|billing|settle|\bEUR\b|\bBGN\b|евро|лева)/i
 
+export interface ColumnKind {
+  date: boolean
+  amount: boolean
+  text: boolean
+  direction: boolean
+  currency: boolean
+  sample: string
+}
+
+/** What each column holds, judged by its cells — used to offer only sensible columns per field. */
+export function columnKinds(table: ParsedTable): ColumnKind[] {
+  return table.headers.map((_, i) => {
+    const v = column(table.rows, i)
+    const currency = v.length > 0 && ratio(v, (x) => /^[\p{L}€$.]{1,4}$/u.test(x.trim())) >= 0.8
+    return {
+      date: ratio(v, looksLikeDate) >= 0.6,
+      amount: ratio(v, looksLikeAmount) >= 0.2,
+      text: !currency && ratio(v, (x) => isTime(x) || looksLikeDate(x) || looksLikeAmount(x)) < 0.5 && ratio(v, (x) => /\p{L}{2}/u.test(x)) >= 0.5,
+      direction: v.length > 0 && ratio(v, (x) => directionOf(x) !== null) >= 0.5,
+      currency,
+      sample: v[0] ?? '',
+    }
+  })
+}
+
 /** Best-effort guess of what each column means, using header names first and cell content second. */
 export function guessMapping(table: ParsedTable): ColumnMapping {
   const { headers, rows } = table
@@ -276,7 +301,9 @@ export function mapRows(table: ParsedTable, m: ColumnMapping): { rows: MappedRow
 
     // Counterparty first: it names the merchant more cleanly than the payment reference.
     const parts = [...m.descriptionExtra.map((j) => raw[j]), raw[m.description]].map((s) => (s ?? '').trim()).filter(Boolean)
-    const description = [...new Set(parts)].join(' · ') || '—'
+    // A date or time already has its own field — it only clutters the description.
+    const useful = parts.filter((p) => !isTime(p) && !looksLikeDate(p) && !looksLikeAmount(p))
+    const description = [...new Set(useful.length ? useful : parts)].join(' · ') || '—'
 
     let currency = 'EUR'
     if (m.currencyMode === 'column') currency = normalizeCurrency(raw[m.currency])

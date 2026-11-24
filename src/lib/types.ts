@@ -64,6 +64,9 @@ export interface MappingProfile {
   /** Signature of the header row — identifies the bank format */
   signature: string
   mapping: ColumnMapping
+  /** True when the user changed the automatic guess. Untouched guesses are not stored as preferences,
+   *  so better detection in a newer version is not overridden by an old guess. */
+  edited?: boolean
   updatedAt: number
 }
 

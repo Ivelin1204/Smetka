@@ -1357,6 +1357,18 @@ code {
   color: var(--text);
   font-weight: 650;
 }
+.chip-reset {
+  margin-left: 6px;
+  padding-left: 8px;
+  border-left: 1px solid currentColor;
+  font-weight: 700;
+  color: var(--text);
+  opacity: 0.85;
+}
+.chip-reset:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
 .chip.ok {
   color: var(--positive);
   border-color: color-mix(in oklab, var(--positive) 35%, transparent);

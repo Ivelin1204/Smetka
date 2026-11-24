@@ -4,7 +4,7 @@ import type { Nav } from '../App'
 import { allRules, db, importRows, type ImportResult } from '../db'
 import { useI18n } from '../i18n'
 import { categorize } from '../lib/categorize'
-import { guessMapping, headerSignature, mapRows, type ParsedTable } from '../lib/csv'
+import { columnKinds, guessMapping, headerSignature, mapRows, type ColumnKind, type ParsedTable } from '../lib/csv'
 import { DATE_FORMATS } from '../lib/dates'
 import { demoBankCsv } from '../lib/demo'
 import { ImportError, loadTable, type LoadedTable } from '../lib/fileImport'
@@ -15,6 +15,7 @@ import { CategoryIcon, Icon, Segmented, Select, useCountUp, type Option } from '
 interface Loaded {
   fileName: string
   table: ParsedTable
+  guess: ColumnMapping
   facts: LoadedTable['facts']
   signature: string
   known: boolean
@@ -50,13 +51,14 @@ export default function ImportPage({ nav }: { nav: Nav }) {
     // The same bank exports different layouts per format, so formats get separate saved mappings.
     const signature = (table.source === 'csv' ? '' : table.source + ':') + headerSignature(table.headers)
     const saved = await db.profiles.get(signature)
-    const guess = saved && Math.max(saved.mapping.date, saved.mapping.description) < table.headers.length ? saved.mapping : guessMapping(table)
+    const guess = guessMapping(table)
+    const usable = saved?.edited && Math.max(saved.mapping.date, saved.mapping.description) < table.headers.length
     if (!table.rows.length || guess.date < 0) {
       setError(t('imp.badFile'))
       return
     }
-    setLoaded({ fileName, table, facts, signature, known: !!saved })
-    setMapping(guess)
+    setLoaded({ fileName, table, guess, facts, signature, known: !!usable })
+    setMapping(usable ? saved!.mapping : guess)
   }
 
   const onFile = async (f: File | undefined) => {
@@ -87,7 +89,9 @@ export default function ImportPage({ nav }: { nav: Nav }) {
   const confirm = async () => {
     if (!loaded || !mapping || !mapped) return
     setBusy(true)
-    await db.profiles.put({ signature: loaded.signature, mapping, updatedAt: Date.now() })
+    const edited = JSON.stringify(mapping) !== JSON.stringify(loaded.guess)
+    if (edited) await db.profiles.put({ signature: loaded.signature, mapping, edited, updatedAt: Date.now() })
+    else await db.profiles.delete(loaded.signature)
     const res = await importRows(mapped.rows, loaded.fileName, mapped.errors.length)
     setBusy(false)
     setResult(res)
@@ -165,7 +169,23 @@ export default function ImportPage({ nav }: { nav: Nav }) {
   }
 
   const { table } = loaded
-  const cols: Option<number>[] = [{ value: -1, label: t('imp.none') }, ...table.headers.map((h, i) => ({ value: i, label: h, hint: table.rows[0]?.[i]?.slice(0, 18) }))]
+  // Each field only offers columns whose content fits it, plus whatever is currently chosen.
+  const kinds = columnKinds(table)
+  const cols = (fits: (k: ColumnKind) => boolean, current: number, optional = false): Option<number>[] => {
+    const picked = table.headers.map((_, i) => i).filter((i) => fits(kinds[i]) || i === current)
+    const list = picked.length ? picked : table.headers.map((_, i) => i)
+    const dup = (i: number) => list.filter((j) => table.headers[j] === table.headers[i]).length > 1
+    return [
+      ...(optional ? [{ value: -1, label: t('imp.none') }] : []),
+      ...list.map((i) => ({
+        value: i,
+        // Same header twice ("Дата", "Дата"): tell them apart by column number.
+        label: dup(i) ? `${table.headers[i]} (${t('imp.col')} ${i + 1})` : table.headers[i],
+        hint: kinds[i].sample.slice(0, 22),
+      })),
+    ]
+  }
+  const used = [mapping.date, mapping.amount, mapping.debit, mapping.credit, mapping.direction, mapping.currency]
   const set = <K extends keyof ColumnMapping>(k: K, v: ColumnMapping[K]) => setMapping({ ...mapping, [k]: v })
   const preview = mapped.rows.slice(0, 8)
 
@@ -196,6 +216,9 @@ export default function ImportPage({ nav }: { nav: Nav }) {
         {loaded.known && (
           <span className="chip ok">
             <Icon name="check" size={14} /> {t('imp.known')}
+            <button className="chip-reset" onClick={() => (setMapping(loaded.guess), setLoaded({ ...loaded, known: false }))}>
+              {t('imp.reset')}
+            </button>
           </span>
         )}
       </div>
@@ -211,13 +234,17 @@ export default function ImportPage({ nav }: { nav: Nav }) {
           <h2>{t('imp.mapping')}</h2>
           <div className="form">
             <Field label={t('imp.colDate')}>
-              <Select value={mapping.date} options={cols} onChange={(v) => set('date', v)} />
+              <Select value={mapping.date} options={cols((k) => k.date, mapping.date)} onChange={(v) => set('date', v)} />
             </Field>
             <Field label={t('imp.colDesc')}>
-              <Select value={mapping.description} options={cols} onChange={(v) => set('description', v)} />
+              <Select value={mapping.description} options={cols((k) => k.text, mapping.description)} onChange={(v) => set('description', v)} />
             </Field>
             <Field label={t('imp.colExtra')}>
-              <Select value={mapping.descriptionExtra[0] ?? -1} options={cols} onChange={(v) => set('descriptionExtra', v >= 0 ? [v] : [])} />
+              <Select
+                value={mapping.descriptionExtra[0] ?? -1}
+                options={cols((k) => k.text, mapping.descriptionExtra[0] ?? -1, true).filter((o) => o.value === -1 || o.value === mapping.descriptionExtra[0] || (o.value !== mapping.description && !used.includes(o.value)))}
+                onChange={(v) => set('descriptionExtra', v >= 0 ? [v] : [])}
+              />
             </Field>
             <Field label={t('imp.amountMode')} full>
               <Segmented<AmountMode>
@@ -233,20 +260,20 @@ export default function ImportPage({ nav }: { nav: Nav }) {
             {mapping.amountMode === 'split' ? (
               <>
                 <Field label={t('imp.colDebit')}>
-                  <Select value={mapping.debit} options={cols} onChange={(v) => set('debit', v)} />
+                  <Select value={mapping.debit} options={cols((k) => k.amount, mapping.debit)} onChange={(v) => set('debit', v)} />
                 </Field>
                 <Field label={t('imp.colCredit')}>
-                  <Select value={mapping.credit} options={cols} onChange={(v) => set('credit', v)} />
+                  <Select value={mapping.credit} options={cols((k) => k.amount, mapping.credit)} onChange={(v) => set('credit', v)} />
                 </Field>
               </>
             ) : (
               <>
                 <Field label={t('imp.colAmount')}>
-                  <Select value={mapping.amount} options={cols} onChange={(v) => set('amount', v)} />
+                  <Select value={mapping.amount} options={cols((k) => k.amount, mapping.amount)} onChange={(v) => set('amount', v)} />
                 </Field>
                 {mapping.amountMode === 'direction' && (
                   <Field label={t('imp.colDir')}>
-                    <Select value={mapping.direction} options={cols} onChange={(v) => set('direction', v)} />
+                    <Select value={mapping.direction} options={cols((k) => k.direction, mapping.direction)} onChange={(v) => set('direction', v)} />
                   </Field>
                 )}
               </>
@@ -278,7 +305,7 @@ export default function ImportPage({ nav }: { nav: Nav }) {
             </Field>
             {mapping.currencyMode === 'column' && (
               <Field label={t('imp.colCurrency')}>
-                <Select value={mapping.currency} options={cols} onChange={(v) => set('currency', v)} />
+                <Select value={mapping.currency} options={cols((k) => k.currency, mapping.currency)} onChange={(v) => set('currency', v)} />
               </Field>
             )}
             <label className="check">
