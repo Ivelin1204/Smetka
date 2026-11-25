@@ -7,11 +7,11 @@ import { useI18n } from '../i18n'
 import { CATEGORY_BY_ID } from '../lib/categories'
 import { daysInMonth, monthKey, monthShort, shiftMonth, todayISO } from '../lib/dates'
 import { BalanceModel } from '../lib/balance'
-import { formatMoney, parseAmount } from '../lib/money'
+import { formatMoney } from '../lib/money'
 import { detectRecurring } from '../lib/recurring'
 import { budgetStatus, cumulativeSpend, monthlySeries, spendByCategory, summarize } from '../lib/stats'
 import type { Transaction } from '../lib/types'
-import { CategoryIcon, Icon, Modal, Money, Progress, useCountUp, useToast } from '../ui'
+import { CategoryIcon, fromTyping, Icon, Modal, Money, MoneyInput, Progress, toTyping, useCountUp, useToast } from '../ui'
 
 export default function Overview({ txs, period, nav }: { txs: Transaction[]; period: PeriodCtx; nav: Nav }) {
   const { t, cat, locale } = useI18n()
@@ -282,7 +282,7 @@ function BalanceCard({ txs, period }: { txs: Transaction[]; period: PeriodCtx })
   const dateLabel = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' })
 
   const save = async () => {
-    const v = parseAmount(draft)
+    const v = fromTyping(draft, locale)
     if (v == null) return
     await setManualBalance(v)
     setEditing(false)
@@ -298,7 +298,7 @@ function BalanceCard({ txs, period }: { txs: Transaction[]; period: PeriodCtx })
           <button className="btn ghost" onClick={() => setEditing(false)}>
             {t('common.cancel')}
           </button>
-          <button className="btn primary" disabled={parseAmount(draft) == null} onClick={save}>
+          <button className="btn primary" disabled={fromTyping(draft, locale) == null} onClick={save}>
             {t('bud.save')}
           </button>
         </>
@@ -312,14 +312,14 @@ function BalanceCard({ txs, period }: { txs: Transaction[]; period: PeriodCtx })
           save()
         }}
       >
-        <input autoFocus inputMode="decimal" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="1 250,00" aria-label={t('bal.title')} />
+        <MoneyInput autoFocus value={draft} onChange={setDraft} placeholder={toTyping(1250, locale)} aria-label={t('bal.title')} />
         <span>€</span>
       </form>
     </Modal>
   )
   const open = () => {
     const now = model.on(today)
-    setDraft(now != null ? now.toFixed(2).replace('.', locale.startsWith('bg') ? ',' : '.') : '')
+    setDraft(now != null ? toTyping(now, locale) : '')
     setEditing(true)
   }
 

@@ -111,6 +111,8 @@ export function formatMoney(n: number, locale: string, opts: { sign?: boolean; c
       currency: 'EUR',
       maximumFractionDigits: opts.compact ? 0 : 2,
       minimumFractionDigits: opts.compact ? 0 : 2,
+      // Bulgarian style leaves 4-digit numbers ungrouped ("1950,00"); group them like the input does.
+      useGrouping: 'always',
     })
     fmtCache.set(key, f)
   }
@@ -122,8 +124,41 @@ export function formatMoney(n: number, locale: string, opts: { sign?: boolean; c
 /** The amount as the bank wrote it, e.g. "−1 200,00 лв." — shown next to the converted euro value. */
 export function formatOriginal(n: number, currency: string, locale: string): string {
   try {
-    return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n).replace('-', '−')
+    return new Intl.NumberFormat(locale, { style: 'currency', currency, useGrouping: 'always' }).format(n).replace('-', '−')
   } catch {
     return `${n.toFixed(2)} ${currency}`
   }
+}
+
+/**
+ * Formats an amount while it is being typed: groups thousands ("1291" → "1 291") and keeps the caret
+ * after the same digit it was after. Bulgarian: "1 234,56" (a typed "." becomes ","); English: "1,234.56".
+ */
+export function formatTyping(raw: string, caret: number, locale: string): { value: string; caret: number } {
+  const bg = locale.startsWith('bg')
+  const dec = bg ? ',' : '.'
+  const group = bg ? ' ' : ','
+  const norm = (s: string) => (bg ? s.replace(/\./g, ',') : s.replace(/,/g, ''))
+  const isSig = (ch: string) => /\d/.test(ch) || ch === dec || ch === '-'
+
+  // How many meaningful characters sit before the caret — that is what we restore it to.
+  const before = [...norm(raw.slice(0, caret))].filter(isSig).length
+
+  const s = norm(raw)
+  const negative = s.trimStart().startsWith('-')
+  const clean = s.replace(new RegExp(`[^\\d${dec === '.' ? '\\.' : dec}]`, 'g'), '')
+  const at = clean.indexOf(dec)
+  let int = at >= 0 ? clean.slice(0, at) : clean
+  const frac = at >= 0 ? clean.slice(at + 1).replace(/\D/g, '').slice(0, 2) : ''
+  int = int.replace(/^0+(?=\d)/, '')
+  const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, group)
+  const value = (negative ? '-' : '') + grouped + (at >= 0 ? dec + frac : '')
+
+  let pos = 0
+  let seen = 0
+  while (pos < value.length && seen < before) {
+    if (isSig(value[pos])) seen++
+    pos++
+  }
+  return { value, caret: pos }
 }

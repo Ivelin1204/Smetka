@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { CATEGORY_BY_ID } from './lib/categories'
-import { formatMoney } from './lib/money'
+import { formatMoney, formatTyping, parseAmount } from './lib/money'
 import { useI18n } from './i18n'
 
 /* ───────── Icons ───────── */
@@ -344,4 +344,44 @@ export function Progress({ value, max, status, marker }: { value: number; max: n
       {marker != null && marker > 0 && <div className="progress-marker" style={{ left: `${Math.min(100, (marker / max) * 100)}%` }} />}
     </div>
   )
+}
+
+/* ───────── Money input ───────── */
+
+/** Groups thousands as you type ("1291" → "1 291") without moving the caret off the digit you typed. */
+export function MoneyInput({ value, onChange, ...rest }: { value: string; onChange: (v: string) => void } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
+  const { locale } = useI18n()
+  const ref = useRef<HTMLInputElement>(null)
+  const caret = useRef<number | null>(null)
+  useLayoutEffect(() => {
+    if (caret.current != null && ref.current && document.activeElement === ref.current) {
+      ref.current.setSelectionRange(caret.current, caret.current)
+      caret.current = null
+    }
+  })
+  return (
+    <input
+      {...rest}
+      ref={ref}
+      inputMode="decimal"
+      autoComplete="off"
+      value={value}
+      onChange={(e) => {
+        const f = formatTyping(e.target.value, e.target.selectionStart ?? e.target.value.length, locale)
+        caret.current = f.caret
+        onChange(f.value)
+      }}
+    />
+  )
+}
+
+/** Turns a number into what MoneyInput shows for it, e.g. 2750.4 → "2 750,40". */
+export function toTyping(n: number, locale: string): string {
+  const s = n.toFixed(2)
+  return formatTyping(s, s.length, locale).value
+}
+
+/** Reads what MoneyInput holds, knowing the locale's decimal separator. */
+export function fromTyping(s: string, locale: string): number | null {
+  return parseAmount(s, locale.startsWith('bg') ? ',' : '.')
 }

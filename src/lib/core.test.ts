@@ -215,3 +215,32 @@ describe('insights on demo data', () => {
     expect(b.projected).toBeGreaterThan(b.spent)
   })
 })
+
+import { formatTyping } from './money'
+
+describe('typing amounts', () => {
+  it.each([
+    ['1291', 'bg', '1 291'],
+    ['12345,5', 'bg', '12 345,5'],
+    ['1234.56', 'bg', '1 234,56'],
+    ['1234567,891', 'bg', '1 234 567,89'],
+    ['007', 'bg', '7'],
+    ['-2500', 'bg', '-2 500'],
+    ['1234,', 'bg', '1 234,'],
+    ['1291', 'en', '1,291'],
+    ['1,2345.6', 'en', '12,345.6'],
+  ])('%s (%s) → %s', (raw, loc, expected) => {
+    expect(formatTyping(raw, raw.length, loc).value).toBe(expected)
+  })
+
+  it('keeps the caret after the same digit', () => {
+    // "1 29|1" → user types "5" after the 9 → "12951" with caret after 5 → "12 95|1"
+    const r = formatTyping('1 2951', 5, 'bg')
+    expect(r.value).toBe('12 951')
+    expect(r.value.slice(0, r.caret)).toBe('12 95')
+  })
+
+  it('round-trips through parseAmount', () => {
+    expect(parseAmount(formatTyping('1234567,8', 9, 'bg').value)).toBe(1234567.8)
+  })
+})

@@ -4,10 +4,10 @@ import { MonthPicker, type PeriodCtx } from '../App'
 import { db } from '../db'
 import { useI18n } from '../i18n'
 import { CATEGORIES } from '../lib/categories'
-import { formatMoney, parseAmount } from '../lib/money'
+import { formatMoney } from '../lib/money'
 import { budgetStatus, spendByCategory, suggestBudget } from '../lib/stats'
 import type { Transaction } from '../lib/types'
-import { CategoryIcon, Icon, Progress } from '../ui'
+import { CategoryIcon, fromTyping, Icon, MoneyInput, Progress, toTyping } from '../ui'
 
 export default function Budgets({ txs, period }: { txs: Transaction[]; period: PeriodCtx }) {
   const { t, cat, locale } = useI18n()
@@ -110,11 +110,11 @@ function LimitEditor({ categoryId, limit }: { categoryId: string; limit: number 
         className="limit-edit"
         onSubmit={(e) => {
           e.preventDefault()
-          save(Math.abs(parseAmount(draft) ?? 0))
+          save(Math.abs(fromTyping(draft, locale) ?? 0))
         }}
       >
         <span className="muted">€</span>
-        <input autoFocus inputMode="decimal" value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={() => save(Math.abs(parseAmount(draft) ?? 0))} onKeyDown={(e) => e.key === 'Escape' && setEditing(false)} />
+        <MoneyInput autoFocus value={draft} onChange={setDraft} onBlur={() => save(Math.abs(fromTyping(draft, locale) ?? 0))} onKeyDown={(e) => e.key === 'Escape' && setEditing(false)} />
       </form>
     )
   }
@@ -123,7 +123,7 @@ function LimitEditor({ categoryId, limit }: { categoryId: string; limit: number 
       <button
         className={'limit-btn' + (limit ? '' : ' empty')}
         onClick={() => {
-          setDraft(limit ? String(limit) : '')
+          setDraft(limit ? toTyping(limit, locale).replace(/[,.]00$/, '') : '')
           setEditing(true)
         }}
       >
