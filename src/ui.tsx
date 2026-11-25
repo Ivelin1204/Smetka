@@ -263,16 +263,27 @@ export function Segmented<T extends string>({ value, options, onChange }: { valu
 
 export function Modal({ open, onClose, title, children, actions }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; actions?: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
+  // Callers pass a new onClose on every render. Keep it in a ref so the effects below run only when
+  // the dialog opens — otherwise every keystroke in a field re-ran them and moved focus to a button.
+  const closeRef = useRef(onClose)
+  useLayoutEffect(() => {
+    closeRef.current = onClose
+  })
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current()
     document.addEventListener('keydown', onKey)
-    ref.current?.querySelector<HTMLElement>('button.primary, button')?.focus()
     return () => document.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open])
+  useEffect(() => {
+    if (!open) return
+    // Focus once, on open: a field if the dialog has one, else the main button.
+    const el = ref.current
+    ;(el?.querySelector<HTMLElement>('input, textarea, select') ?? el?.querySelector<HTMLElement>('button.primary, button'))?.focus()
+  }, [open])
   if (!open) return null
   return createPortal(
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && closeRef.current()}>
       <div ref={ref} className="modal" role="dialog" aria-modal="true">
         <h3>{title}</h3>
         <div className="modal-body">{children}</div>
