@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { CATEGORY_BY_ID } from './lib/categories'
-import { formatMoney, formatTyping, parseAmount } from './lib/money'
+import { applyMoneyOp, EMPTY_ENTRY, entryFromText, entryToText, formatMoney, parseAmount, type MoneyEntry } from './lib/money'
 import { useI18n } from './i18n'
 
 /* ───────── Icons ───────── */
@@ -348,28 +348,97 @@ export function Progress({ value, max, status, marker }: { value: number; max: n
 
 /* ───────── Money input ───────── */
 
-/** Groups thousands as you type ("1291" → "1 291") without moving the caret off the digit you typed. */
-export function MoneyInput({ value, onChange, ...rest }: { value: string; onChange: (v: string) => void } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
+const separators = (locale: string) => (locale.startsWith('bg') ? { dec: ',' as const, group: ' ' } : { dec: '.' as const, group: ',' })
+
+/**
+ * Amount field that behaves like a banking app: ",00" is always there, digits land in front of the
+ * separator, "," or "." moves on to the cents. Edits come through `beforeinput`, which desktop and
+ * mobile keyboards both fire, so the same rules apply everywhere.
+ */
+export function MoneyInput({ value, onChange, onFocus, ...rest }: { value: string; onChange: (v: string) => void } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
   const { locale } = useI18n()
+  const { dec, group } = separators(locale)
   const ref = useRef<HTMLInputElement>(null)
-  const caret = useRef<number | null>(null)
+  // Cent digits typed so far isn't visible in the text ("1,00" vs "1,0|0"), so it is kept here.
+  const entry = useRef<MoneyEntry>(entryFromText(value, dec))
+  const latest = useRef({ value, onChange, dec, group })
   useLayoutEffect(() => {
-    if (caret.current != null && ref.current && document.activeElement === ref.current) {
-      ref.current.setSelectionRange(caret.current, caret.current)
-      caret.current = null
-    }
+    latest.current = { value, onChange, dec, group }
+    // The parent replaced the value (e.g. prefilled it): start over from it.
+    if (entryToText(entry.current, dec, group) !== value) entry.current = entryFromText(value, dec)
   })
+
+  // Caret sits where the next digit goes: before the separator, or at the end once typing cents.
+  const placeCaret = () => {
+    const el = ref.current
+    if (!el || document.activeElement !== el) return
+    const v = el.value
+    if (!v || (el.selectionStart === 0 && el.selectionEnd === v.length && v.length > 0 && el.dataset.fresh)) return
+    const pos = entry.current.centsTyped < 0 ? v.length - 3 : v.length
+    if (el.selectionStart !== pos || el.selectionEnd !== pos) el.setSelectionRange(pos, pos)
+  }
+  useLayoutEffect(placeCaret)
+  const placeCaretRef = useRef(placeCaret)
+  useLayoutEffect(() => {
+    placeCaretRef.current = placeCaret
+  })
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const onBeforeInput = (ev: InputEvent) => {
+      // Enter must still submit the form.
+      if (ev.inputType === 'insertLineBreak' || ev.inputType === 'insertParagraph') return
+      ev.preventDefault()
+      const { value: v, onChange: change, dec: d, group: g } = latest.current
+      // Everything selected (on focus, or select-all): the next key replaces the amount.
+      const replacing = !!el.dataset.fresh || (v.length > 0 && el.selectionStart === 0 && el.selectionEnd === v.length)
+      delete el.dataset.fresh
+      let e = replacing ? EMPTY_ENTRY : entry.current
+      const t = ev.inputType
+      if (t === 'insertFromPaste' || t === 'insertFromDrop') {
+        const text = ev.data ?? ev.dataTransfer?.getData('text/plain') ?? ''
+        const n = parseAmount(text)
+        if (n != null) e = entryFromText(n.toFixed(2), '.')
+      } else if (t.startsWith('insert') && ev.data) e = applyMoneyOp(e, { type: 'insert', text: ev.data })
+      else if (t.startsWith('delete')) e = replacing ? EMPTY_ENTRY : applyMoneyOp(e, { type: 'delete' })
+      entry.current = e
+      const text = entryToText(e, d, g)
+      change(text)
+      // Leaving the cents can keep the text the same ("1 291,00"), so no re-render moves the caret.
+      if (text === v) placeCaretRef.current()
+    }
+    el.addEventListener('beforeinput', onBeforeInput)
+    return () => el.removeEventListener('beforeinput', onBeforeInput)
+  }, [])
+
   return (
     <input
       {...rest}
       ref={ref}
+      type="text"
       inputMode="decimal"
       autoComplete="off"
       value={value}
-      onChange={(e) => {
-        const f = formatTyping(e.target.value, e.target.selectionStart ?? e.target.value.length, locale)
-        caret.current = f.caret
-        onChange(f.value)
+      onChange={() => {}}
+      onFocus={(e) => {
+        // Select the prefilled amount so typing replaces it, like most banking apps do.
+        if (e.currentTarget.value) {
+          e.currentTarget.dataset.fresh = '1'
+          e.currentTarget.select()
+        }
+        onFocus?.(e)
+      }}
+      onClick={() => {
+        if (ref.current) delete ref.current.dataset.fresh
+        placeCaret()
+      }}
+      onKeyUp={(e) => {
+        if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') {
+          if (ref.current) delete ref.current.dataset.fresh
+          placeCaret()
+        }
+        rest.onKeyUp?.(e)
       }}
     />
   )
@@ -377,11 +446,11 @@ export function MoneyInput({ value, onChange, ...rest }: { value: string; onChan
 
 /** Turns a number into what MoneyInput shows for it, e.g. 2750.4 → "2 750,40". */
 export function toTyping(n: number, locale: string): string {
-  const s = n.toFixed(2)
-  return formatTyping(s, s.length, locale).value
+  const { dec, group } = separators(locale)
+  return entryToText(entryFromText(n.toFixed(2), '.'), dec, group)
 }
 
-/** Reads what MoneyInput holds, knowing the locale's decimal separator. */
+/** Reads what MoneyInput holds. */
 export function fromTyping(s: string, locale: string): number | null {
-  return parseAmount(s, locale.startsWith('bg') ? ',' : '.')
+  return parseAmount(s, separators(locale).dec)
 }

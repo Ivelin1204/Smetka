@@ -131,34 +131,62 @@ export function formatOriginal(n: number, currency: string, locale: string): str
 }
 
 /**
- * Formats an amount while it is being typed: groups thousands ("1291" → "1 291") and keeps the caret
- * after the same digit it was after. Bulgarian: "1 234,56" (a typed "." becomes ","); English: "1,234.56".
+ * Amount entry the way banking apps do it: ",00" is always shown, digits go in front of the separator,
+ * and typing "," (or ".") moves on to the cents, which fill from the left ("5" → ",50", then "6" → ",56").
  */
-export function formatTyping(raw: string, caret: number, locale: string): { value: string; caret: number } {
-  const bg = locale.startsWith('bg')
-  const dec = bg ? ',' : '.'
-  const group = bg ? ' ' : ','
-  const norm = (s: string) => (bg ? s.replace(/\./g, ',') : s.replace(/,/g, ''))
-  const isSig = (ch: string) => /\d/.test(ch) || ch === dec || ch === '-'
+export interface MoneyEntry {
+  negative: boolean
+  /** whole units, digits only, may be '' */
+  units: string
+  /** always two digits */
+  cents: string
+  /** how many cent digits have been typed; -1 while still typing whole units */
+  centsTyped: number
+}
 
-  // How many meaningful characters sit before the caret — that is what we restore it to.
-  const before = [...norm(raw.slice(0, caret))].filter(isSig).length
+export type MoneyOp = { type: 'insert'; text: string } | { type: 'delete' } | { type: 'clear' }
 
-  const s = norm(raw)
-  const negative = s.trimStart().startsWith('-')
-  const clean = s.replace(new RegExp(`[^\\d${dec === '.' ? '\\.' : dec}]`, 'g'), '')
-  const at = clean.indexOf(dec)
-  let int = at >= 0 ? clean.slice(0, at) : clean
-  const frac = at >= 0 ? clean.slice(at + 1).replace(/\D/g, '').slice(0, 2) : ''
-  int = int.replace(/^0+(?=\d)/, '')
-  const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, group)
-  const value = (negative ? '-' : '') + grouped + (at >= 0 ? dec + frac : '')
+export const EMPTY_ENTRY: MoneyEntry = { negative: false, units: '', cents: '00', centsTyped: -1 }
 
-  let pos = 0
-  let seen = 0
-  while (pos < value.length && seen < before) {
-    if (isSig(value[pos])) seen++
-    pos++
+export function entryFromText(text: string, dec: ',' | '.'): MoneyEntry {
+  if (!text.trim()) return EMPTY_ENTRY
+  const negative = /^\s*[-−]/.test(text)
+  const at = text.lastIndexOf(dec)
+  const units = (at >= 0 ? text.slice(0, at) : text).replace(/\D/g, '').replace(/^0+(?=\d)/, '')
+  const cents = (at >= 0 ? text.slice(at + 1).replace(/\D/g, '') : '').padEnd(2, '0').slice(0, 2)
+  return { negative, units, cents, centsTyped: -1 }
+}
+
+export function entryToText(e: MoneyEntry, dec: ',' | '.', group: string): string {
+  if (!e.units && e.cents === '00' && e.centsTyped < 0 && !e.negative) return ''
+  const units = (e.units.replace(/^0+(?=\d)/, '') || '0').replace(/\B(?=(\d{3})+(?!\d))/g, group)
+  return (e.negative ? '-' : '') + units + dec + e.cents
+}
+
+export function applyMoneyOp(e: MoneyEntry, op: MoneyOp): MoneyEntry {
+  if (op.type === 'clear') return EMPTY_ENTRY
+  const next = { ...e }
+  if (op.type === 'delete') {
+    if (next.centsTyped > 0) {
+      next.centsTyped--
+      next.cents = next.centsTyped === 0 ? '00' : next.cents[0] + '0'
+    } else if (next.centsTyped === 0) next.centsTyped = -1
+    else if (next.units) next.units = next.units.slice(0, -1)
+    else next.negative = false
+    return next
   }
-  return { value, caret: pos }
+  for (const ch of op.text) {
+    if (/\d/.test(ch)) {
+      if (next.centsTyped < 0) {
+        if (next.units.length < 10) next.units = (next.units === '0' ? '' : next.units) + ch
+      } else if (next.centsTyped < 2) {
+        next.cents = next.centsTyped === 0 ? ch + '0' : next.cents[0] + ch
+        next.centsTyped++
+      }
+    } else if ((ch === ',' || ch === '.') && next.centsTyped < 0) {
+      next.centsTyped = 0
+      next.cents = '00'
+    } else if (ch === '-' || ch === '−') next.negative = !next.negative
+  }
+  return next
 }

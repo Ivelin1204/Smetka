@@ -123,7 +123,7 @@ function LimitEditor({ categoryId, limit }: { categoryId: string; limit: number 
       <button
         className={'limit-btn' + (limit ? '' : ' empty')}
         onClick={() => {
-          setDraft(limit ? toTyping(limit, locale).replace(/[,.]00$/, '') : '')
+          setDraft(limit ? toTyping(limit, locale) : '')
           setEditing(true)
         }}
       >

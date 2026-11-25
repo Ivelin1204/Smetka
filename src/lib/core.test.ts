@@ -216,31 +216,41 @@ describe('insights on demo data', () => {
   })
 })
 
-import { formatTyping } from './money'
+import { applyMoneyOp, EMPTY_ENTRY, entryFromText, entryToText, type MoneyEntry } from './money'
 
-describe('typing amounts', () => {
+describe('typing amounts like a banking app', () => {
+  const type = (keys: string, from: MoneyEntry = EMPTY_ENTRY, dec: ',' | '.' = ',', group = ' ') => {
+    let e = from
+    for (const k of keys) e = applyMoneyOp(e, k === '⌫' ? { type: 'delete' } : { type: 'insert', text: k })
+    return entryToText(e, dec, group)
+  }
+
   it.each([
-    ['1291', 'bg', '1 291'],
-    ['12345,5', 'bg', '12 345,5'],
-    ['1234.56', 'bg', '1 234,56'],
-    ['1234567,891', 'bg', '1 234 567,89'],
-    ['007', 'bg', '7'],
-    ['-2500', 'bg', '-2 500'],
-    ['1234,', 'bg', '1 234,'],
-    ['1291', 'en', '1,291'],
-    ['1,2345.6', 'en', '12,345.6'],
-  ])('%s (%s) → %s', (raw, loc, expected) => {
-    expect(formatTyping(raw, raw.length, loc).value).toBe(expected)
+    ['1', '1,00'],
+    ['1291', '1 291,00'],
+    ['1291,6', '1 291,60'],
+    ['1291,68', '1 291,68'],
+    ['1291.68', '1 291,68'],
+    ['1291,689', '1 291,68'],
+    [',5', '0,50'],
+    ['007', '7,00'],
+    ['1291,68⌫', '1 291,60'],
+    ['1291,6⌫⌫', '1 291,00'],
+    ['1291⌫', '129,00'],
+    ['1⌫', ''],
+    ['-250', '-250,00'],
+  ])('%s → %s', (keys, expected) => expect(type(keys)).toBe(expected))
+
+  it('typing after "," keeps working on cents, deleting past it goes back to units', () => {
+    expect(type('12,⌫3')).toBe('123,00')
   })
 
-  it('keeps the caret after the same digit', () => {
-    // "1 29|1" → user types "5" after the 9 → "12951" with caret after 5 → "12 95|1"
-    const r = formatTyping('1 2951', 5, 'bg')
-    expect(r.value).toBe('12 951')
-    expect(r.value.slice(0, r.caret)).toBe('12 95')
+  it('uses English separators in English', () => {
+    expect(type('1291.5', EMPTY_ENTRY, '.', ',')).toBe('1,291.50')
   })
 
-  it('round-trips through parseAmount', () => {
-    expect(parseAmount(formatTyping('1234567,8', 9, 'bg').value)).toBe(1234567.8)
+  it('reads an existing amount back', () => {
+    expect(entryToText(entryFromText('3 482,17', ','), ',', ' ')).toBe('3 482,17')
+    expect(parseAmount(entryToText(entryFromText('2750.4', '.'), ',', ' '))).toBe(2750.4)
   })
 })
