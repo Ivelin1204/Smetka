@@ -3,7 +3,8 @@ import { BUILTIN_RULES } from './lib/categories'
 import { categorize, extractMerchant, haystack, patternFromMerchant, ruleMatches, sortRules } from './lib/categorize'
 import { fingerprint, hash, type MappedRow } from './lib/csv'
 import { generateDemo } from './lib/demo'
-import type { Budget, ImportRecord, MappingProfile, Rule, Transaction } from './lib/types'
+import { todayISO } from './lib/dates'
+import type { BalanceSnapshot, Budget, ImportRecord, MappingProfile, Rule, Transaction } from './lib/types'
 
 /** Everything lives in the browser (IndexedDB). Nothing is ever uploaded. */
 export const db = new Dexie('smetka') as Dexie & {
@@ -12,6 +13,7 @@ export const db = new Dexie('smetka') as Dexie & {
   profiles: EntityTable<MappingProfile, 'signature'>
   imports: EntityTable<ImportRecord, 'id'>
   budgets: EntityTable<Budget, 'categoryId'>
+  balances: EntityTable<BalanceSnapshot, 'id'>
 }
 
 db.version(1).stores({
@@ -21,6 +23,7 @@ db.version(1).stores({
   imports: 'id, createdAt',
   budgets: 'categoryId',
 })
+db.version(2).stores({ balances: 'id, date, importId' })
 
 export async function allRules(): Promise<Rule[]> {
   const user = await db.rules.toArray()
@@ -34,7 +37,7 @@ export interface ImportResult {
   importId: string
 }
 
-export async function importRows(rows: MappedRow[], fileName: string, errors: number): Promise<ImportResult> {
+export async function importRows(rows: MappedRow[], fileName: string, errors: number, balances: { date: string; amount: number }[] = []): Promise<ImportResult> {
   const rules = await allRules()
   const ids = fingerprint(rows)
   const importId = 'imp_' + hash(fileName + Date.now())
@@ -59,9 +62,11 @@ export async function importRows(rows: MappedRow[], fileName: string, errors: nu
       importId,
     })
   })
-  await db.transaction('rw', db.transactions, db.imports, async () => {
+  await db.transaction('rw', db.transactions, db.imports, db.balances, async () => {
     await db.transactions.bulkAdd(fresh)
     await db.imports.add({ id: importId, fileName, createdAt: Date.now(), added: fresh.length, duplicates: rows.length - fresh.length, errors })
+    // Statement balances are keyed by day, so re-importing an overlapping file just refreshes them.
+    await db.balances.bulkPut(balances.map((b) => ({ id: `stmt_${b.date}`, date: b.date, amount: b.amount, source: 'statement' as const, importId, createdAt: Date.now() })))
   })
   return {
     added: fresh.length,
@@ -74,7 +79,8 @@ export async function importRows(rows: MappedRow[], fileName: string, errors: nu
 export async function loadDemo(): Promise<ImportResult> {
   const raw = generateDemo()
   const rows: MappedRow[] = raw.map((r, i) => ({ line: i + 1, ...r, originalAmount: r.amount, originalCurrency: 'EUR' }))
-  const res = await importRows(rows, 'demo-data', 0)
+  // Pretend the latest statement said what the account holds today.
+  const res = await importRows(rows, 'demo-data', 0, [{ date: todayISO(), amount: 3482.17 }])
   if (!(await db.budgets.count())) {
     await db.budgets.bulkPut([
       { categoryId: 'groceries', limit: 320 },
@@ -131,37 +137,46 @@ export async function deleteRule(id: string) {
 }
 
 export async function clearAll() {
-  await Promise.all([db.transactions.clear(), db.rules.clear(), db.profiles.clear(), db.imports.clear(), db.budgets.clear()])
+  await Promise.all([db.transactions.clear(), db.rules.clear(), db.profiles.clear(), db.imports.clear(), db.budgets.clear(), db.balances.clear()])
+}
+
+/** The balance the user says the account holds today. */
+export async function setManualBalance(amount: number) {
+  const date = todayISO()
+  await db.balances.put({ id: `manual_${date}`, date, amount, source: 'manual', createdAt: Date.now() })
 }
 
 export async function exportBackup(): Promise<string> {
-  const [transactions, rules, profiles, imports, budgets] = await Promise.all([
+  const [transactions, rules, profiles, imports, budgets, balances] = await Promise.all([
     db.transactions.toArray(),
     db.rules.toArray(),
     db.profiles.toArray(),
     db.imports.toArray(),
     db.budgets.toArray(),
+    db.balances.toArray(),
   ])
-  return JSON.stringify({ app: 'smetka', version: 1, exportedAt: new Date().toISOString(), transactions, rules, profiles, imports, budgets })
+  return JSON.stringify({ app: 'smetka', version: 2, exportedAt: new Date().toISOString(), transactions, rules, profiles, imports, budgets, balances })
 }
 
 export async function restoreBackup(json: string) {
   const data = JSON.parse(json)
   if (data?.app !== 'smetka') throw new Error('not-a-backup')
-  await db.transaction('rw', [db.transactions, db.rules, db.profiles, db.imports, db.budgets], async () => {
+  await db.transaction('rw', [db.transactions, db.rules, db.profiles, db.imports, db.budgets, db.balances], async () => {
     await clearAll()
     await db.transactions.bulkPut(data.transactions ?? [])
     await db.rules.bulkPut(data.rules ?? [])
     await db.profiles.bulkPut(data.profiles ?? [])
     await db.imports.bulkPut(data.imports ?? [])
     await db.budgets.bulkPut(data.budgets ?? [])
+    await db.balances.bulkPut(data.balances ?? [])
   })
 }
 
 /** Undo an import: removes exactly the transactions it added. */
 export async function deleteImport(importId: string) {
-  await db.transaction('rw', db.transactions, db.imports, async () => {
+  await db.transaction('rw', db.transactions, db.imports, db.balances, async () => {
     await db.transactions.where('importId').equals(importId).delete()
+    await db.balances.where('importId').equals(importId).delete()
     await db.imports.delete(importId)
   })
 }

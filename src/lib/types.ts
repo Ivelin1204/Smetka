@@ -58,6 +58,8 @@ export interface ColumnMapping {
   dateFormat: DateFormat
   decimal: DecimalSep
   invertSign: boolean
+  /** Running balance column, if the statement has one (-1 / missing = none) */
+  balance?: number
 }
 
 export interface MappingProfile {
@@ -83,4 +85,16 @@ export interface Budget {
   categoryId: string
   /** Monthly limit in EUR (positive) */
   limit: number
+}
+
+/** What the account held at the end of a day — read from a statement or typed in by the user. */
+export interface BalanceSnapshot {
+  id: string
+  /** YYYY-MM-DD; the balance is at the end of this day */
+  date: string
+  /** EUR */
+  amount: number
+  source: 'statement' | 'manual'
+  importId?: string
+  createdAt: number
 }

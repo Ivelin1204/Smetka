@@ -1,4 +1,4 @@
-import { decodeBytes, parseTable, tableFromRows, type ParsedTable } from './csv'
+import { decodeBytes, findClosingBalance, parseTable, tableFromRows, type ParsedTable } from './csv'
 import { pdfItemsToTable, type PdfTextItem } from './pdfTable'
 
 export type FileKind = 'csv' | 'xlsx' | 'pdf'
@@ -114,7 +114,7 @@ async function loadPdf(buf: ArrayBuffer): Promise<LoadedTable> {
   const t = pdfItemsToTable(extracted.items)
   if (!t.rows.length) throw new ImportError('no-table')
   return {
-    table: { source: 'pdf', delimiter: '', headerIndex: t.hasHeader ? 0 : -1, headers: t.headers, rows: t.rows },
+    table: { source: 'pdf', delimiter: '', headerIndex: t.hasHeader ? 0 : -1, headers: t.headers, rows: t.rows, closingBalance: findClosingBalance(t.otherLines) },
     facts: [{ label: 'pages', value: String(extracted.pages) }],
   }
 }

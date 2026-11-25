@@ -2,15 +2,16 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { useMemo, useState } from 'react'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { MonthPicker, type Nav, type PeriodCtx } from '../App'
-import { db } from '../db'
+import { db, setManualBalance } from '../db'
 import { useI18n } from '../i18n'
 import { CATEGORY_BY_ID } from '../lib/categories'
-import { monthKey, shiftMonth, todayISO } from '../lib/dates'
-import { formatMoney } from '../lib/money'
+import { daysInMonth, monthKey, monthShort, shiftMonth, todayISO } from '../lib/dates'
+import { BalanceModel } from '../lib/balance'
+import { formatMoney, parseAmount } from '../lib/money'
 import { detectRecurring } from '../lib/recurring'
 import { budgetStatus, cumulativeSpend, monthlySeries, spendByCategory, summarize } from '../lib/stats'
 import type { Transaction } from '../lib/types'
-import { CategoryIcon, Icon, Money, Progress, useCountUp } from '../ui'
+import { CategoryIcon, Icon, Modal, Money, Progress, useCountUp, useToast } from '../ui'
 
 export default function Overview({ txs, period, nav }: { txs: Transaction[]; period: PeriodCtx; nav: Nav }) {
   const { t, cat, locale } = useI18n()
@@ -35,7 +36,7 @@ export default function Overview({ txs, period, nav }: { txs: Transaction[]; per
 
   const fmt = (n: number) => formatMoney(n, locale)
   const fmtC = (n: number) => formatMoney(n, locale, { compact: true })
-  const shortMonth = (m: string) => new Date(m + '-01T00:00:00').toLocaleDateString(locale, { month: 'short' })
+  const shortMonth = (m: string) => monthShort(m, locale)
 
   return (
     <div className="page">
@@ -53,6 +54,8 @@ export default function Overview({ txs, period, nav }: { txs: Transaction[]; per
           </span>
         </button>
       )}
+
+      <BalanceCard txs={txs} period={period} />
 
       <section className="kpis">
         <Kpi label={t('ov.income')} value={cur.income} prev={prev.income} good="up" delay={0} />
@@ -252,6 +255,144 @@ export default function Overview({ txs, period, nav }: { txs: Transaction[]; per
         )}
       </section>
     </div>
+  )
+}
+
+/** What the account holds: from statement balances or a balance the user typed in, rolled through the transactions. */
+function BalanceCard({ txs, period }: { txs: Transaction[]; period: PeriodCtx }) {
+  const { t, locale } = useI18n()
+  const toast = useToast()
+  const snapshots = useLiveQuery(() => db.balances.toArray(), [], undefined)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const today = todayISO()
+  const model = useMemo(() => new BalanceModel(txs, snapshots ?? []), [txs, snapshots])
+  if (snapshots === undefined) return null
+
+  const { month, isCurrent } = period
+  const endDay = isCurrent ? today : `${month}-${String(daysInMonth(month)).padStart(2, '0')}`
+  const value = model.on(endDay)
+  // Balance going into the month = end of its last day before it.
+  const startOfMonth = model.on(`${shiftMonth(month, -1)}-${String(daysInMonth(shiftMonth(month, -1))).padStart(2, '0')}`)
+  const anchor = model.anchorFor(endDay)
+  const firstMonth = txs.length ? monthKey(txs[txs.length - 1].date) : undefined
+  const series = model.monthly(month, 12, today, firstMonth)
+  const fmt = (n: number) => formatMoney(n, locale)
+  const fmtC = (n: number) => formatMoney(n, locale, { compact: true })
+  const dateLabel = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' })
+
+  const save = async () => {
+    const v = parseAmount(draft)
+    if (v == null) return
+    await setManualBalance(v)
+    setEditing(false)
+    toast(t('bal.saved'))
+  }
+  const editor = (
+    <Modal
+      open={editing}
+      onClose={() => setEditing(false)}
+      title={t('bal.editTitle')}
+      actions={
+        <>
+          <button className="btn ghost" onClick={() => setEditing(false)}>
+            {t('common.cancel')}
+          </button>
+          <button className="btn primary" disabled={parseAmount(draft) == null} onClick={save}>
+            {t('bud.save')}
+          </button>
+        </>
+      }
+    >
+      <p>{t('bal.editText', { date: dateLabel(today) })}</p>
+      <form
+        className="balance-input"
+        onSubmit={(e) => {
+          e.preventDefault()
+          save()
+        }}
+      >
+        <input autoFocus inputMode="decimal" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="1 250,00" aria-label={t('bal.title')} />
+        <span>€</span>
+      </form>
+    </Modal>
+  )
+  const open = () => {
+    const now = model.on(today)
+    setDraft(now != null ? now.toFixed(2).replace('.', locale.startsWith('bg') ? ',' : '.') : '')
+    setEditing(true)
+  }
+
+  if (!model.hasData || value == null) {
+    return (
+      <section className="card balance-card empty rise">
+        <div className="balance-empty">
+          <div>
+            <h2>{t('bal.askTitle')}</h2>
+            <p className="muted">{t('bal.askText')}</p>
+          </div>
+          <button className="btn primary" onClick={open}>
+            <Icon name="plus" size={16} /> {t('bal.enter')}
+          </button>
+        </div>
+        {editor}
+      </section>
+    )
+  }
+
+  const change = startOfMonth != null ? value - startOfMonth : null
+  return (
+    <section className="card balance-card rise">
+      <div className="balance-main">
+        <span className="kpi-label">{isCurrent ? t('bal.today') : t('bal.endOf', { month: new Date(month + '-01T00:00:00').toLocaleDateString(locale, { month: 'long' }) })}</span>
+        <Money value={value} className="balance-value" />
+        {change != null && Math.abs(change) >= 0.01 && (
+          <span className={'delta ' + (change >= 0 ? 'good' : 'bad')}>
+            <Icon name={change >= 0 ? 'arrowUp' : 'arrowDown'} size={13} />
+            {formatMoney(change, locale, { sign: true })} <span className="muted">{t('bal.sinceStart')}</span>
+          </span>
+        )}
+        {anchor && (
+          <span className="muted small balance-source">
+            {t(anchor.source === 'manual' ? 'bal.fromManual' : 'bal.fromStatement', { date: dateLabel(anchor.date) })}
+            <button className="link-btn" onClick={open}>
+              {t('bal.update')}
+            </button>
+          </span>
+        )}
+      </div>
+      {series.length > 1 && (
+        <div className="balance-chart">
+          <ResponsiveContainer>
+            <AreaChart data={series} margin={{ top: 6, right: 4, left: 4, bottom: 0 }}>
+              <defs>
+                <linearGradient id="gBal" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--positive)" stopOpacity={0.3} />
+                  <stop offset="100%" stopColor="var(--positive)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <XAxis dataKey="month" tickFormatter={(m: string) => monthShort(m, locale)} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 11 }} interval="preserveStartEnd" />
+              <YAxis hide domain={['dataMin - 100', 'dataMax + 100']} />
+              <Tooltip
+                content={({ active, payload }) =>
+                  active && payload?.length ? (
+                    <div className="chart-tip">
+                      <div className="muted small">{new Date(String(payload[0].payload.month) + '-01T00:00:00').toLocaleDateString(locale, { month: 'long', year: 'numeric' })}</div>
+                      <strong className="num">{fmt(Number(payload[0].value))}</strong>
+                    </div>
+                  ) : null
+                }
+              />
+              <Area type="monotone" dataKey="balance" stroke="var(--positive)" strokeWidth={2.2} fill="url(#gBal)" dot={false} animationDuration={900} />
+            </AreaChart>
+          </ResponsiveContainer>
+          <span className="muted small balance-range num">
+            {fmtC(Math.min(...series.map((x) => x.balance)))} – {fmtC(Math.max(...series.map((x) => x.balance)))}
+          </span>
+        </div>
+      )}
+      {editor}
+    </section>
   )
 }
 

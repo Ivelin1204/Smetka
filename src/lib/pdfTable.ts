@@ -96,6 +96,8 @@ export interface PdfTable {
   hasHeader: boolean
   pages: number
   textItems: number
+  /** Text lines outside the table, as cells — searched for a closing balance */
+  otherLines: string[][]
 }
 
 /**
@@ -148,7 +150,7 @@ export function pdfItemsToTable(items: PdfTextItem[]): PdfTable {
     } else prev = null
   }
 
-  if (!rows.length) return { headers: [], rows: [], hasHeader: false, pages, textItems: items.length }
+  if (!rows.length) return { headers: [], rows: [], hasHeader: false, pages, textItems: items.length, otherLines: [] }
 
   // Columns are the vertical strips the rows share. Instead of guessing alignment (left, right or
   // centred), look for gutters: x-ranges that no cell in any row touches.
@@ -228,5 +230,7 @@ export function pdfItemsToTable(items: PdfTextItem[]): PdfTable {
     }
   }
 
-  return { headers, rows: rows.map(toRow), hasHeader, pages, textItems: items.length }
+  const rowYs = new Set(rows.map((r) => `${r.page}:${r.y}`))
+  const otherLines = lines.filter((l) => !rowYs.has(`${l.page}:${l.y}`)).map((l) => l.cells.map((c) => c.text))
+  return { headers, rows: rows.map(toRow), hasHeader, pages, textItems: items.length, otherLines }
 }

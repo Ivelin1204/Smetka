@@ -1,7 +1,7 @@
 import Papa from 'papaparse'
 import { detectDateFormat, looksLikeDate, parseDate } from './dates'
 import { detectDecimal, EURO_SWITCH_DATE, looksLikeAmount, normalizeCurrency, parseAmount, toEur } from './money'
-import type { ColumnMapping } from './types'
+import type { ColumnMapping, DecimalSep } from './types'
 
 export interface DecodedFile {
   text: string
@@ -27,6 +27,8 @@ export interface ParsedTable {
   headerIndex: number
   headers: string[]
   rows: string[][]
+  /** "Крайно салдо 1 234,56" found outside the table, as written */
+  closingBalance?: string
 }
 
 /** Parses CSV text. Delimiter is detected; the table itself is located by tableFromRows. */
@@ -74,7 +76,43 @@ export function tableFromRows(grid: string[][], delimiter: string, source: Table
       ? all[headerIndex].map((h, i) => h || `#${i + 1}`)
       : Array.from({ length: width }, (_, i) => `#${i + 1}`)
   const rows = all.slice(dataStart).filter((r) => r.some(Boolean) && r.length >= Math.min(3, width))
-  return { source, delimiter, headerIndex, headers, rows }
+  return { source, delimiter, headerIndex, headers, rows, closingBalance: findClosingBalance(all) }
+}
+
+const CLOSING = /(крайно салдо|салдо в края|closing balance|ending balance|наличност в края|крайна наличност)/i
+
+/** Finds a "closing balance" line outside the table (preamble or footer). Returns the amount as written. */
+export function findClosingBalance(lines: string[][]): string | undefined {
+  let found: string | undefined
+  for (const cells of lines) {
+    if (!cells.some((c) => CLOSING.test(c))) continue
+    const amounts = cells.map((c) => c.replace(CLOSING, '').replace(/[:]/g, '').trim()).filter((c) => looksLikeAmount(c))
+    if (amounts.length) found = amounts[amounts.length - 1]
+  }
+  return found
+}
+
+/**
+ * End-of-day balances a statement states: from its balance column (one per day, the last row of the day
+ * in time order) or, failing that, its closing-balance line on the last day it covers.
+ */
+export function statementBalances(rows: MappedRow[], closing?: string, decimal?: DecimalSep): { date: string; amount: number }[] {
+  if (!rows.length) return []
+  const withBalance = rows.filter((r) => r.balance != null)
+  if (withBalance.length) {
+    // Exports run oldest→newest or newest→oldest; read them in time order.
+    const chronological = withBalance[0].date <= withBalance[withBalance.length - 1].date ? withBalance : [...withBalance].reverse()
+    const byDay = new Map<string, number>()
+    for (const r of chronological) byDay.set(r.date, r.balance!)
+    return [...byDay].map(([date, amount]) => ({ date, amount }))
+  }
+  if (closing) {
+    const v = parseAmount(closing, decimal)
+    if (v == null) return []
+    const last = rows.reduce((a, b) => (b.date > a.date ? b : a))
+    return [{ date: last.date, amount: toEur(v, last.originalCurrency) }]
+  }
+  return []
 }
 
 export function headerSignature(headers: string[]): string {
@@ -90,6 +128,7 @@ const H = {
   credit: /(кредит|credit|приход|deposit|входящ|in$)/i,
   direction: /(д\/к|d\/c|вид|type|тип|посока|direction)/i,
   currency: /(валута|currency|ccy)/i,
+  balance: /(салдо|balance|наличност)/i,
 }
 
 function column(rows: string[][], i: number, n = 40) {
@@ -175,6 +214,10 @@ export function guessMapping(table: ParsedTable): ColumnMapping {
   let amount = amountCols.find((i) => ACCOUNT_CCY.test(headers[i])) ?? amountCols[0] ?? -1
   const accountAmount = amount >= 0 && amountCols.length > 1 && ACCOUNT_CCY.test(headers[amount])
 
+  // A running balance ("Салдо") is not a transaction amount, but it tells us what the account held.
+  const balanceCol = all.find((i) => ![date, debit, credit, amount].includes(i) && H.balance.test(headers[i]) && ratio(column(rows, i), looksLikeAmount) >= 0.6) ?? -1
+  if (balanceCol >= 0 && amount === balanceCol) amount = -1
+
   let currency = idx(H.currency, [date, amount, debit, credit])
   if (currency >= 0 && ratio(column(rows, currency), (s) => /^[\p{L}€$.]{1,4}$/u.test(s.trim())) < 0.8) currency = -1
   let currencyMode: ColumnMapping['currencyMode'] = currency >= 0 ? 'column' : 'auto-euro-switch'
@@ -188,7 +231,7 @@ export function guessMapping(table: ParsedTable): ColumnMapping {
   let direction = -1
   if (amount < 0 && debit >= 0 && credit >= 0) amountMode = 'split'
   else {
-    if (amount < 0) amount = contentIdx(looksLikeAmount, [date, currency, debit, credit], 0.8)
+    if (amount < 0) amount = contentIdx(looksLikeAmount, [date, currency, debit, credit, balanceCol], 0.8)
     if (amount >= 0) {
       const vals = column(rows, amount)
       const unsigned = vals.filter((v) => /^[-−(]|-$/.test(v.trim())).length <= vals.length * 0.05
@@ -211,7 +254,7 @@ export function guessMapping(table: ParsedTable): ColumnMapping {
     invertSign = vals.length >= 3 && vals.filter((v) => v > 0).length >= vals.length * 0.95
   }
 
-  const used = [date, amount, debit, credit, currency, direction, ...amountCols]
+  const used = [date, amount, debit, credit, currency, direction, balanceCol, ...amountCols]
   const textual = (i: number) => {
     const v = column(rows, i)
     return ratio(v, (x) => isTime(x) || looksLikeDate(x) || looksLikeAmount(x)) < 0.5 && ratio(v, (x) => /\p{L}{2}/u.test(x)) >= 0.5
@@ -246,6 +289,7 @@ export function guessMapping(table: ParsedTable): ColumnMapping {
     dateFormat: detectDateFormat(column(rows, date, 80)) ?? 'DD.MM.YYYY',
     decimal: detectDecimal(amountSamples),
     invertSign,
+    balance: balanceCol,
   }
 }
 
@@ -256,6 +300,8 @@ export interface MappedRow {
   amount: number
   originalAmount: number
   originalCurrency: string
+  /** Account balance after this row, EUR — when the statement has a balance column */
+  balance?: number
 }
 
 export interface RowError {
@@ -314,7 +360,8 @@ export function mapRows(table: ParsedTable, m: ColumnMapping): { rows: MappedRow
     else if (m.currencyMode === 'BGN') currency = 'BGN'
     else if (m.currencyMode === 'auto-euro-switch') currency = date < EURO_SWITCH_DATE ? 'BGN' : 'EUR'
 
-    rows.push({ line, date, description, amount: toEur(value, currency), originalAmount: value, originalCurrency: currency })
+    const bal = m.balance != null && m.balance >= 0 ? parseAmount(raw[m.balance], m.decimal) : null
+    rows.push({ line, date, description, amount: toEur(value, currency), originalAmount: value, originalCurrency: currency, ...(bal != null ? { balance: toEur(bal, currency) } : {}) })
   })
   return { rows, errors }
 }

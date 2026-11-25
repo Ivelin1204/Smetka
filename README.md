@@ -13,6 +13,8 @@
 ## What it does
 
 - **Reads PDF statements, in the browser.** pdf.js pulls out the positioned text, and Smetka rebuilds the table from it. A row is a line that starts with a date at the usual date position and holds an amount. Wrapped descriptions are joined back together. Columns are found from where cells line up across rows: text on the left edge, numbers on the right. Opening balances, totals, repeated headers and page footers are skipped. Scanned PDFs (images only) are detected and explained instead of failing silently.
+- **Knows your balance.** A running-balance column ("Салдо") or a closing-balance line in a statement is read automatically, or you type in today's balance. From those points and the transactions, Smetka works out the balance on every day and charts it month by month. Each known point re-anchors the line, so a missing transaction only skews the days until the next one.
+- **Imports many files at once.** Drop a year of monthly statements together. Files with the same layout share one column mapping, each file still gets its own duplicate check and its own undo, and unreadable files (scans, empty exports) are listed instead of stopping the rest.
 - **Reads Excel files** (.xlsx, e.g. Revolut exports). It picks the sheet that looks like a statement.
 - **Imports messy bank exports.** UTF-8 or Windows-1251, `;` `,` or tab delimiters, account-info preamble lines before the table, `DD.MM.YYYY` / ISO / US dates, `1 234,56` or `1,234.56` amounts, and debit/credit columns or `Д/К` markers. Columns are guessed from header names first and cell contents second, and you can correct the guess in a live preview.
 - **Remembers each bank's format.** The column mapping is saved against the header row's signature, so the second import from the same bank is one click.
@@ -50,6 +52,7 @@ src/
     categorize.ts   merchant extraction, rule engine
     categories.ts   categories and built-in rules
     recurring.ts    subscription detection
+    balance.ts      balance on any day from statement/manual snapshots + transactions
     stats.ts        monthly summaries, pace, budget projections
     demo.ts         demo data and sample bank CSV
   db.ts         IndexedDB schema, import, learning, undo, backup

@@ -90,3 +90,9 @@ export function addDays(iso: string, days: number): string {
   const d = new Date(Date.parse(iso) + days * 86_400_000)
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
 }
+
+/** "дек", "Dec" — Chrome renders Bulgarian `month: 'short'` as a bare number, so cut the long name. */
+export function monthShort(month: string, locale: string): string {
+  const long = new Date(month + '-01T00:00:00').toLocaleDateString(locale, { month: 'long' })
+  return long.slice(0, 3)
+}

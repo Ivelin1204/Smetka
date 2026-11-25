@@ -1,106 +1,173 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useMemo, useRef, useState } from 'react'
 import type { Nav } from '../App'
-import { allRules, db, importRows, type ImportResult } from '../db'
+import { allRules, db, importRows } from '../db'
 import { useI18n } from '../i18n'
 import { categorize } from '../lib/categorize'
-import { columnKinds, guessMapping, headerSignature, mapRows, type ColumnKind, type ParsedTable } from '../lib/csv'
+import { columnKinds, guessMapping, headerSignature, mapRows, statementBalances, type ColumnKind, type ParsedTable } from '../lib/csv'
 import { DATE_FORMATS } from '../lib/dates'
 import { demoBankCsv } from '../lib/demo'
-import { ImportError, loadTable, type LoadedTable } from '../lib/fileImport'
+import { ImportError, loadTable, type ImportErrorCode, type LoadedTable } from '../lib/fileImport'
 import { formatMoney, formatOriginal } from '../lib/money'
 import type { AmountMode, ColumnMapping, CurrencyMode, DateFormat, DecimalSep } from '../lib/types'
 import { CategoryIcon, Icon, Segmented, Select, useCountUp, type Option } from '../ui'
 
-interface Loaded {
-  fileName: string
+interface LoadedFile {
+  name: string
+  table: ParsedTable
+  facts: LoadedTable['facts']
+}
+
+/** Files that share a layout (same bank, same format) get one column mapping. */
+interface Group {
+  signature: string
+  files: LoadedFile[]
+  /** All files' rows together — for guessing columns and the preview */
   table: ParsedTable
   guess: ColumnMapping
-  facts: LoadedTable['facts']
-  signature: string
-  known: boolean
+  saved: ColumnMapping | null
 }
+
+interface Failure {
+  name: string
+  code: ImportErrorCode
+}
+
+interface Totals {
+  files: number
+  added: number
+  duplicates: number
+  categorized: number
+  /** Latest balance any statement stated */
+  balance: { date: string; amount: number } | null
+}
+
+const EMPTY: Totals = { files: 0, added: 0, duplicates: 0, categorized: 0, balance: null }
 
 export default function ImportPage({ nav }: { nav: Nav }) {
   const { t, cat, locale } = useI18n()
-  const [loaded, setLoaded] = useState<Loaded | null>(null)
+  const [groups, setGroups] = useState<Group[]>([])
+  const [gi, setGi] = useState(0)
   const [mapping, setMapping] = useState<ColumnMapping | null>(null)
+  const [known, setKnown] = useState(false)
+  const [failures, setFailures] = useState<Failure[]>([])
+  const [totals, setTotals] = useState<Totals | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [drag, setDrag] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [reading, setReading] = useState(false)
-  const [result, setResult] = useState<ImportResult | null>(null)
+  const [reading, setReading] = useState<{ done: number; total: number } | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const rules = useLiveQuery(allRules, [], [])
 
-  const load = async (fileName: string, buf: ArrayBuffer) => {
+  const failText = (code: ImportErrorCode) => t(code === 'scanned-pdf' ? 'imp.errScanned' : code === 'no-table' ? 'imp.badFile' : 'imp.errUnreadable')
+
+  const startGroup = (g: Group) => {
+    setMapping(g.saved ?? g.guess)
+    setKnown(!!g.saved)
+  }
+
+  const loadFiles = async (files: { name: string; read: () => Promise<ArrayBuffer> }[]) => {
+    if (!files.length) return
     setError(null)
-    setResult(null)
-    setReading(true)
-    let read: LoadedTable
-    try {
-      read = await loadTable(fileName, buf)
-    } catch (e) {
-      const code = e instanceof ImportError ? e.code : 'unreadable'
-      setError(t(code === 'scanned-pdf' ? 'imp.errScanned' : code === 'no-table' ? 'imp.badFile' : 'imp.errUnreadable'))
-      setReading(false)
+    setTotals(null)
+    const failed: Failure[] = []
+    const bySig = new Map<string, LoadedFile[]>()
+    for (let i = 0; i < files.length; i++) {
+      setReading({ done: i, total: files.length })
+      const f = files[i]
+      try {
+        const { table, facts } = await loadTable(f.name, await f.read())
+        if (!table.rows.length) throw new ImportError('no-table')
+        // The same bank exports different layouts per format, so formats get separate mappings.
+        const sig = (table.source === 'csv' ? '' : table.source + ':') + headerSignature(table.headers)
+        bySig.set(sig, [...(bySig.get(sig) ?? []), { name: f.name, table, facts }])
+      } catch (e) {
+        failed.push({ name: f.name, code: e instanceof ImportError ? e.code : 'unreadable' })
+      }
+    }
+    const built: Group[] = []
+    for (const [signature, list] of bySig) {
+      const table: ParsedTable = { ...list[0].table, rows: list.flatMap((f) => f.table.rows) }
+      const guess = guessMapping(table)
+      if (guess.date < 0) {
+        list.forEach((f) => failed.push({ name: f.name, code: 'no-table' }))
+        continue
+      }
+      const saved = await db.profiles.get(signature)
+      const usable = saved?.edited && Math.max(saved.mapping.date, saved.mapping.description) < table.headers.length
+      built.push({ signature, files: list, table, guess, saved: usable ? saved!.mapping : null })
+    }
+    setReading(null)
+    setFailures(failed)
+    if (!built.length) {
+      setError(failed.length === 1 ? failText(failed[0].code) : t('imp.noneRead'))
       return
     }
-    setReading(false)
-    const { table, facts } = read
-    // The same bank exports different layouts per format, so formats get separate saved mappings.
-    const signature = (table.source === 'csv' ? '' : table.source + ':') + headerSignature(table.headers)
-    const saved = await db.profiles.get(signature)
-    const guess = guessMapping(table)
-    const usable = saved?.edited && Math.max(saved.mapping.date, saved.mapping.description) < table.headers.length
-    if (!table.rows.length || guess.date < 0) {
-      setError(t('imp.badFile'))
-      return
-    }
-    setLoaded({ fileName, table, guess, facts, signature, known: !!usable })
-    setMapping(usable ? saved!.mapping : guess)
+    setGroups(built)
+    setGi(0)
+    startGroup(built[0])
   }
 
-  const onFile = async (f: File | undefined) => {
-    if (!f) return
-    await load(f.name, await f.arrayBuffer())
-  }
+  const fromFileList = (list: FileList | null | undefined) =>
+    loadFiles([...(list ?? [])].map((f) => ({ name: f.name, read: () => f.arrayBuffer() })))
 
-  const loadSampleCsv = () => load('sample-statement.csv', new TextEncoder().encode(demoBankCsv()).buffer as ArrayBuffer)
-  const loadSamplePdf = async () => {
-    try {
-      const res = await fetch('./sample-statement.pdf')
-      if (!res.ok) throw new Error()
-      await load('sample-statement.pdf', await res.arrayBuffer())
-    } catch {
-      setError(t('imp.errUnreadable'))
-    }
-  }
+  const loadSampleCsv = () => loadFiles([{ name: 'sample-statement.csv', read: async () => new TextEncoder().encode(demoBankCsv()).buffer as ArrayBuffer }])
+  const loadSamplePdf = () =>
+    loadFiles([
+      {
+        name: 'sample-statement.pdf',
+        read: async () => {
+          const res = await fetch('./sample-statement.pdf')
+          if (!res.ok) throw new ImportError('unreadable')
+          return res.arrayBuffer()
+        },
+      },
+    ])
 
-  const mapped = useMemo(() => (loaded && mapping ? mapRows(loaded.table, mapping) : null), [loaded, mapping])
+  const group = groups[gi] as Group | undefined
+  const mapped = useMemo(() => (group && mapping ? mapRows(group.table, mapping) : null), [group, mapping])
 
   const reset = () => {
-    setLoaded(null)
+    setGroups([])
     setMapping(null)
-    setResult(null)
+    setTotals(null)
+    setFailures([])
     if (input.current) input.current.value = ''
   }
 
   const confirm = async () => {
-    if (!loaded || !mapping || !mapped) return
+    if (!group || !mapping) return
     setBusy(true)
-    const edited = JSON.stringify(mapping) !== JSON.stringify(loaded.guess)
-    if (edited) await db.profiles.put({ signature: loaded.signature, mapping, edited, updatedAt: Date.now() })
-    else await db.profiles.delete(loaded.signature)
-    const res = await importRows(mapped.rows, loaded.fileName, mapped.errors.length)
+    const edited = JSON.stringify(mapping) !== JSON.stringify(group.guess)
+    if (edited) await db.profiles.put({ signature: group.signature, mapping, edited, updatedAt: Date.now() })
+    else await db.profiles.delete(group.signature)
+    // File by file: each gets its own fingerprints (so overlapping statements dedupe) and its own undo.
+    const sum = { ...(totals ?? EMPTY) }
+    for (const f of group.files) {
+      const { rows, errors } = mapRows(f.table, mapping)
+      const balances = statementBalances(rows, f.table.closingBalance, mapping.decimal)
+      const res = await importRows(rows, f.name, errors.length, balances)
+      sum.files++
+      sum.added += res.added
+      sum.duplicates += res.duplicates
+      sum.categorized += res.categorized
+      const last = balances[balances.length - 1]
+      if (last && (!sum.balance || last.date >= sum.balance.date)) sum.balance = last
+    }
     setBusy(false)
-    setResult(res)
-    setLoaded(null)
+    if (gi + 1 < groups.length) {
+      setTotals(sum)
+      setGi(gi + 1)
+      startGroup(groups[gi + 1])
+    } else {
+      setGroups([])
+      setTotals(sum)
+    }
   }
 
-  if (result) return <Done result={result} nav={nav} onAgain={reset} />
+  if (totals && !groups.length) return <Done totals={totals} failures={failures} failText={failText} nav={nav} onAgain={reset} />
 
-  if (!loaded || !mapping || !mapped) {
+  if (!group || !mapping || !mapped) {
     return (
       <div className="page narrow">
         <header className="page-head">
@@ -108,13 +175,13 @@ export default function ImportPage({ nav }: { nav: Nav }) {
         </header>
         <div
           className={'dropzone rise' + (drag ? ' drag' : '') + (reading ? ' reading' : '')}
-          aria-busy={reading}
+          aria-busy={!!reading}
           onDragOver={(e) => (e.preventDefault(), setDrag(true))}
           onDragLeave={() => setDrag(false)}
           onDrop={(e) => {
             e.preventDefault()
             setDrag(false)
-            onFile(e.dataTransfer.files[0])
+            fromFileList(e.dataTransfer.files)
           }}
           onClick={() => !reading && input.current?.click()}
           role="button"
@@ -124,7 +191,7 @@ export default function ImportPage({ nav }: { nav: Nav }) {
           <div className="drop-icon">
             <Icon name="file" size={30} />
           </div>
-          <strong className="drop-title">{reading ? t('imp.reading') : t('imp.drop')}</strong>
+          <strong className="drop-title">{reading ? (reading.total > 1 ? t('imp.readingN', { done: reading.done + 1, total: reading.total }) : t('imp.reading')) : t('imp.drop')}</strong>
           {reading ? (
             <span className="loader" aria-hidden />
           ) : (
@@ -139,28 +206,42 @@ export default function ImportPage({ nav }: { nav: Nav }) {
                   </span>
                 ))}
               </span>
+              <span className="muted small">{t('imp.many')}</span>
             </>
           )}
           <input
             ref={input}
             type="file"
+            multiple
             accept=".csv,.txt,.xlsx,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             hidden
-            onChange={(e) => onFile(e.target.files?.[0])}
+            onChange={(e) => fromFileList(e.target.files)}
           />
         </div>
         {error && (
-          <p className="error-note">
-            <Icon name="warn" size={16} /> {error}
-          </p>
+          <div className="error-note">
+            <Icon name="warn" size={16} />
+            <div>
+              {error}
+              {failures.length > 1 && (
+                <ul className="fail-list">
+                  {failures.map((f) => (
+                    <li key={f.name}>
+                      <b>{f.name}</b> — {failText(f.code)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
         )}
         <p className="muted small center">{t('imp.hint')}</p>
         <div className="sample-row">
           <span className="muted small">{t('imp.sample')}</span>
-          <button className="btn ghost sm" disabled={reading} onClick={loadSampleCsv}>
+          <button className="btn ghost sm" disabled={!!reading} onClick={loadSampleCsv}>
             <Icon name="file" size={15} /> CSV
           </button>
-          <button className="btn ghost sm" disabled={reading} onClick={loadSamplePdf}>
+          <button className="btn ghost sm" disabled={!!reading} onClick={loadSamplePdf}>
             <Icon name="file" size={15} /> PDF
           </button>
         </div>
@@ -168,10 +249,10 @@ export default function ImportPage({ nav }: { nav: Nav }) {
     )
   }
 
-  const { table } = loaded
+  const { table } = group
   // Each column has at most one role. A field offers only columns whose content fits it and that no
   // other field is using — so the same date can't end up in two places.
-  type Role = 'date' | 'description' | 'extra' | 'amount' | 'debit' | 'credit' | 'direction' | 'currency'
+  type Role = 'date' | 'description' | 'extra' | 'amount' | 'debit' | 'credit' | 'direction' | 'currency' | 'balance'
   const roles: Record<Role, number> = {
     date: mapping.date,
     description: mapping.description,
@@ -181,6 +262,7 @@ export default function ImportPage({ nav }: { nav: Nav }) {
     credit: mapping.amountMode === 'split' ? mapping.credit : -1,
     direction: mapping.amountMode === 'direction' ? mapping.direction : -1,
     currency: mapping.currencyMode === 'column' ? mapping.currency : -1,
+    balance: mapping.balance ?? -1,
   }
   const kinds = columnKinds(table)
   const cols = (role: Role, fits: (k: ColumnKind) => boolean, optional = false): Option<number>[] => {
@@ -211,13 +293,14 @@ export default function ImportPage({ nav }: { nav: Nav }) {
       </header>
 
       <div className="detected rise">
-        <span className="file-chip">
-          <Icon name="file" size={16} /> {loaded.fileName}
+        {groups.length > 1 && <span className="chip strong-chip">{t('imp.groupOf', { n: gi + 1, total: groups.length })}</span>}
+        <span className="file-chip" title={group.files.map((f) => f.name).join('\n')}>
+          <Icon name="file" size={16} /> {group.files.length > 1 ? t('imp.nFiles', { n: group.files.length }) : group.files[0].name}
         </span>
         <span className="chip">
           {t('imp.format')}: <b>{table.source === 'xlsx' ? 'Excel' : table.source.toUpperCase()}</b>
         </span>
-        {loaded.facts.map((f) => (
+        {group.files.length === 1 && group.files[0].facts.map((f) => (
           <span key={f.label} className="chip">
             {t(`imp.${f.label}`)}: <b>{f.value}</b>
           </span>
@@ -225,15 +308,28 @@ export default function ImportPage({ nav }: { nav: Nav }) {
         <span className="chip">
           {t('imp.rows')}: <b>{table.rows.length}</b>
         </span>
-        {loaded.known && (
+        {known && (
           <span className="chip ok">
             <Icon name="check" size={14} /> {t('imp.known')}
-            <button className="chip-reset" onClick={() => (setMapping(loaded.guess), setLoaded({ ...loaded, known: false }))}>
+            <button className="chip-reset" onClick={() => (setMapping(group.guess), setKnown(false))}>
               {t('imp.reset')}
             </button>
           </span>
         )}
       </div>
+
+      {group.files.length > 1 && (
+        <details className="file-list rise">
+          <summary className="muted small">{t('imp.showFiles')}</summary>
+          <ul>
+            {group.files.map((f) => (
+              <li key={f.name} className="small">
+                <Icon name="file" size={14} className="muted" /> {f.name} <span className="muted">· {f.table.rows.length}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       {table.source === 'pdf' && (
         <p className="pdf-note rise">
@@ -320,6 +416,9 @@ export default function ImportPage({ nav }: { nav: Nav }) {
                 <Select value={mapping.currency} options={cols('currency', (k) => k.currency)} onChange={(v) => set('currency', v)} />
               </Field>
             )}
+            <Field label={t('imp.colBalance')}>
+              <Select value={mapping.balance ?? -1} options={cols('balance', (k) => k.amount, true)} onChange={(v) => set('balance', v)} />
+            </Field>
             <label className="check">
               <input type="checkbox" checked={mapping.invertSign} onChange={(e) => set('invertSign', e.target.checked)} />
               <span className="box">
@@ -373,7 +472,7 @@ export default function ImportPage({ nav }: { nav: Nav }) {
             </details>
           )}
           <button className="btn primary lg block" disabled={busy || mapped.rows.length === 0} onClick={confirm}>
-            <Icon name="upload" /> {t('imp.confirm', { n: mapped.rows.length })}
+            <Icon name="upload" /> {group.files.length > 1 ? t('imp.confirmFiles', { n: mapped.rows.length, files: group.files.length }) : t('imp.confirm', { n: mapped.rows.length })}
           </button>
         </div>
       </div>
@@ -390,11 +489,11 @@ function Field({ label, children, full }: { label: string; children: React.React
   )
 }
 
-function Done({ result, nav, onAgain }: { result: ImportResult; nav: Nav; onAgain: () => void }) {
-  const { t } = useI18n()
-  const added = useCountUp(result.added)
-  const dupes = useCountUp(result.duplicates)
-  const auto = useCountUp(result.added ? (result.categorized / result.added) * 100 : 0)
+function Done({ totals, failures, failText, nav, onAgain }: { totals: Totals; failures: Failure[]; failText: (c: ImportErrorCode) => string; nav: Nav; onAgain: () => void }) {
+  const { t, locale } = useI18n()
+  const added = useCountUp(totals.added)
+  const dupes = useCountUp(totals.duplicates)
+  const auto = useCountUp(totals.added ? (totals.categorized / totals.added) * 100 : 0)
   return (
     <div className="page narrow">
       <div className="card done rise">
@@ -402,6 +501,7 @@ function Done({ result, nav, onAgain }: { result: ImportResult; nav: Nav; onAgai
           <Icon name="check" size={34} />
         </div>
         <h1>{t('imp.doneTitle')}</h1>
+        {totals.files > 1 && <p className="muted">{t('imp.doneFiles', { n: totals.files })}</p>}
         <div className="done-stats">
           <div>
             <span className="num big">{Math.round(added)}</span>
@@ -412,11 +512,35 @@ function Done({ result, nav, onAgain }: { result: ImportResult; nav: Nav; onAgai
             <span className="muted">{t('imp.dupes')}</span>
           </div>
           <div>
-            <span className="num big">{result.added ? `${Math.round(auto)}%` : '—'}</span>
+            <span className="num big">{totals.added ? `${Math.round(auto)}%` : '—'}</span>
             <span className="muted">{t('imp.auto')}</span>
           </div>
         </div>
-        {result.added === 0 && result.duplicates > 0 && <p className="muted">{t('imp.allDupes')}</p>}
+        {totals.added === 0 && totals.duplicates > 0 && <p className="muted">{t('imp.allDupes')}</p>}
+        {totals.balance && (
+          <p className="balance-found">
+            <Icon name="check" size={15} className="good" />
+            {t('imp.balanceFound', {
+              amount: formatMoney(totals.balance.amount, locale),
+              date: new Date(totals.balance.date + 'T00:00:00').toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' }),
+            })}
+          </p>
+        )}
+        {failures.length > 0 && (
+          <div className="error-note left">
+            <Icon name="warn" size={16} />
+            <div>
+              {t('imp.skipped', { n: failures.length })}
+              <ul className="fail-list">
+                {failures.map((f) => (
+                  <li key={f.name}>
+                    <b>{f.name}</b> — {failText(f.code)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
         <div className="row gap center">
           <button className="btn ghost" onClick={onAgain}>
             {t('imp.again')}
