@@ -131,78 +131,45 @@ export function formatOriginal(n: number, currency: string, locale: string): str
 }
 
 /**
- * Amount entry the way banking apps do it: ",00" is always shown, digits go in front of the separator,
- * and typing "," (or ".") moves on to the cents, which fill from the left ("5" → ",50", then "6" → ",56").
+ * Amount entry the way banking apps and card terminals do it: digits come in from the right, starting
+ * with the cents — "1" → 0,01, "12" → 0,12, "129168" → 1 291,68. No separator to type; Backspace
+ * drops the last digit.
  */
 export interface MoneyEntry {
   negative: boolean
-  /** whole units, digits only, may be '' */
-  units: string
-  /** always two digits */
-  cents: string
-  /** how many cent digits have been typed; -1 while still typing whole units */
-  centsTyped: number
+  /** All digits typed, cents included; '' = empty */
+  digits: string
 }
 
 export type MoneyOp = { type: 'insert'; text: string } | { type: 'delete' } | { type: 'clear' }
 
-export const EMPTY_ENTRY: MoneyEntry = { negative: false, units: '', cents: '00', centsTyped: -1 }
+export const EMPTY_ENTRY: MoneyEntry = { negative: false, digits: '' }
 
 export function entryFromText(text: string, dec: ',' | '.'): MoneyEntry {
-  if (!text.trim()) return EMPTY_ENTRY
-  const negative = /^\s*[-−]/.test(text)
-  const at = text.lastIndexOf(dec)
-  const units = (at >= 0 ? text.slice(0, at) : text).replace(/\D/g, '').replace(/^0+(?=\d)/, '')
-  const cents = (at >= 0 ? text.slice(at + 1).replace(/\D/g, '') : '').padEnd(2, '0').slice(0, 2)
-  return { negative, units, cents, centsTyped: -1 }
+  const n = parseAmount(text, dec)
+  if (/^\s*[-−]\s*$/.test(text)) return { negative: true, digits: '' } // a lone minus, typed first
+  if (n == null || n === 0) return EMPTY_ENTRY
+  const cents = Math.round(Math.abs(n) * 100)
+  return { negative: n < 0, digits: String(cents) }
 }
 
 export function entryToText(e: MoneyEntry, dec: ',' | '.', group: string): string {
-  if (!e.units && e.cents === '00' && e.centsTyped < 0 && !e.negative) return ''
-  const units = (e.units.replace(/^0+(?=\d)/, '') || '0').replace(/\B(?=(\d{3})+(?!\d))/g, group)
-  return (e.negative ? '-' : '') + units + dec + e.cents
+  if (!e.digits) return e.negative ? '-' : ''
+  const padded = e.digits.padStart(3, '0')
+  const units = padded.slice(0, -2).replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, group)
+  return (e.negative ? '-' : '') + units + dec + padded.slice(-2)
 }
 
 export function applyMoneyOp(e: MoneyEntry, op: MoneyOp): MoneyEntry {
   if (op.type === 'clear') return EMPTY_ENTRY
-  const next = { ...e }
-  if (op.type === 'delete') {
-    if (next.centsTyped > 0) {
-      // Clear the cent digit left of the caret and step back over it.
-      next.centsTyped--
-      next.cents = next.centsTyped === 0 ? '0' + next.cents[1] : next.cents[0] + '0'
-    } else if (next.centsTyped === 0) next.centsTyped = -1
-    else if (next.units) next.units = next.units.slice(0, -1)
-    else next.negative = false
-    return next
-  }
+  if (op.type === 'delete') return e.digits ? { ...e, digits: e.digits.slice(0, -1) } : EMPTY_ENTRY
+  let { negative, digits } = e
   for (const ch of op.text) {
     if (/\d/.test(ch)) {
-      if (next.centsTyped < 0) {
-        if (next.units.length < 10) next.units = (next.units === '0' ? '' : next.units) + ch
-      } else if (next.centsTyped < 2) {
-        // Overwrite the cent digit at the caret: ",5|0" + "7" → ",57"
-        next.cents = next.centsTyped === 0 ? ch + next.cents[1] : next.cents[0] + ch
-        next.centsTyped++
-      }
-    } else if ((ch === ',' || ch === '.') && next.centsTyped < 0) {
-      next.centsTyped = 0
-      next.cents = '00'
-    } else if (ch === '-' || ch === '−') next.negative = !next.negative
+      if (!digits && ch === '0') continue // leading zeros change nothing
+      if (digits.length < 12) digits += ch
+    } else if (ch === '-' || ch === '−') negative = !negative
+    // "," and "." are ignored: the cents are always the last two digits.
   }
-  return next
-}
-
-/** Where the caret goes in the text for an entry: before the separator, or inside the cents. */
-export function caretFor(e: MoneyEntry, text: string, dec: ',' | '.'): number {
-  const sep = text.lastIndexOf(dec)
-  if (sep < 0) return text.length
-  return e.centsTyped < 0 ? sep : sep + 1 + Math.min(e.centsTyped, 2)
-}
-
-/** The user put the caret somewhere (click, tap, arrow keys): after the separator means editing cents. */
-export function entryAtCaret(e: MoneyEntry, text: string, caret: number, dec: ',' | '.'): MoneyEntry {
-  const sep = text.lastIndexOf(dec)
-  if (sep < 0 || caret <= sep) return { ...e, centsTyped: -1 }
-  return { ...e, centsTyped: Math.min(2, caret - sep - 1) }
+  return { negative, digits }
 }

@@ -216,9 +216,9 @@ describe('insights on demo data', () => {
   })
 })
 
-import { applyMoneyOp, caretFor, EMPTY_ENTRY, entryAtCaret, entryFromText, entryToText, type MoneyEntry } from './money'
+import { applyMoneyOp, EMPTY_ENTRY, entryFromText, entryToText, type MoneyEntry } from './money'
 
-describe('typing amounts like a banking app', () => {
+describe('typing amounts like a card terminal', () => {
   const type = (keys: string, from: MoneyEntry = EMPTY_ENTRY, dec: ',' | '.' = ',', group = ' ') => {
     let e = from
     for (const k of keys) e = applyMoneyOp(e, k === '⌫' ? { type: 'delete' } : { type: 'insert', text: k })
@@ -226,44 +226,20 @@ describe('typing amounts like a banking app', () => {
   }
 
   it.each([
-    ['1', '1,00'],
-    ['1291', '1 291,00'],
-    ['1291,6', '1 291,60'],
-    ['1291,68', '1 291,68'],
-    ['1291.68', '1 291,68'],
-    ['1291,689', '1 291,68'],
-    [',5', '0,50'],
-    ['007', '7,00'],
-    ['1291,68⌫', '1 291,60'],
-    ['1291,6⌫⌫', '1 291,00'],
-    ['1291,68⌫⌫', '1 291,00'],
-    ['1291⌫', '129,00'],
+    ['1', '0,01'],
+    ['12', '0,12'],
+    ['129', '1,29'],
+    ['129168', '1 291,68'],
+    ['12916800', '129 168,00'],
+    ['0012', '0,12'],
+    ['1,2.9', '1,29'],
+    ['129168⌫', '129,16'],
     ['1⌫', ''],
-    ['-250', '-250,00'],
+    ['-129168', '-1 291,68'],
   ])('%s → %s', (keys, expected) => expect(type(keys)).toBe(expected))
 
-  it('typing after "," keeps working on cents, deleting past it goes back to units', () => {
-    expect(type('12,⌫3')).toBe('123,00')
-  })
-
-  it('lets you click into the cents and type over them', () => {
-    const text = '1 291,50'
-    let e = entryAtCaret(entryFromText(text, ','), text, text.indexOf(',') + 1, ',') // caret right after ","
-    e = applyMoneyOp(e, { type: 'insert', text: '7' })
-    expect(entryToText(e, ',', ' ')).toBe('1 291,70')
-    e = applyMoneyOp(e, { type: 'insert', text: '5' })
-    expect(entryToText(e, ',', ' ')).toBe('1 291,75')
-    expect(caretFor(e, '1 291,75', ',')).toBe(8)
-  })
-
-  it('clicking before the separator goes back to whole units', () => {
-    const text = '1 291,75'
-    const e = applyMoneyOp(entryAtCaret({ ...entryFromText(text, ','), centsTyped: 2 }, text, 3, ','), { type: 'insert', text: '3' })
-    expect(entryToText(e, ',', ' ')).toBe('12 913,75')
-  })
-
   it('uses English separators in English', () => {
-    expect(type('1291.5', EMPTY_ENTRY, '.', ',')).toBe('1,291.50')
+    expect(type('129168', EMPTY_ENTRY, '.', ',')).toBe('1,291.68')
   })
 
   it('reads an existing amount back', () => {

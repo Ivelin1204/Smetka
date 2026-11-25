@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { CATEGORY_BY_ID } from './lib/categories'
-import { applyMoneyOp, caretFor, EMPTY_ENTRY, entryAtCaret, entryFromText, entryToText, formatMoney, parseAmount, type MoneyEntry } from './lib/money'
+import { applyMoneyOp, EMPTY_ENTRY, entryFromText, entryToText, formatMoney, parseAmount } from './lib/money'
 import { useI18n } from './i18n'
 
 /* ───────── Icons ───────── */
@@ -351,47 +351,26 @@ export function Progress({ value, max, status, marker }: { value: number; max: n
 const separators = (locale: string) => (locale.startsWith('bg') ? { dec: ',' as const, group: ' ' } : { dec: '.' as const, group: ',' })
 
 /**
- * Amount field that behaves like a banking app: ",00" is always there, digits land in front of the
- * separator, "," or "." moves on to the cents. Edits come through `beforeinput`, which desktop and
- * mobile keyboards both fire, so the same rules apply everywhere.
+ * Amount field that works like a card terminal: digits come in from the right, starting with the
+ * cents ("129168" → 1 291,68). Edits come through `beforeinput`, which desktop and mobile keyboards
+ * both fire, so the same rules apply everywhere. The caret always sits at the end.
  */
 export function MoneyInput({ value, onChange, onFocus, ...rest }: { value: string; onChange: (v: string) => void } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
   const { locale } = useI18n()
   const { dec, group } = separators(locale)
   const ref = useRef<HTMLInputElement>(null)
-  // Cent digits typed so far isn't visible in the text ("1,00" vs "1,0|0"), so it is kept here.
-  const entry = useRef<MoneyEntry>(entryFromText(value, dec))
   const latest = useRef({ value, onChange, dec, group })
   useLayoutEffect(() => {
     latest.current = { value, onChange, dec, group }
-    // The parent replaced the value (e.g. prefilled it): start over from it.
-    if (entryToText(entry.current, dec, group) !== value) entry.current = entryFromText(value, dec)
   })
 
-  // Caret sits where the next digit goes: before the separator, or at the end once typing cents.
-  const placeCaret = () => {
+  const toEnd = () => {
     const el = ref.current
-    if (!el || document.activeElement !== el) return
-    const v = el.value
-    if (!v || (el.selectionStart === 0 && el.selectionEnd === v.length && v.length > 0 && el.dataset.fresh)) return
-    const pos = caretFor(entry.current, v, latest.current.dec)
-    if (el.selectionStart !== pos || el.selectionEnd !== pos) el.setSelectionRange(pos, pos)
+    if (!el || document.activeElement !== el || el.dataset.fresh) return
+    const end = el.value.length
+    if (el.selectionStart !== end || el.selectionEnd !== end) el.setSelectionRange(end, end)
   }
-
-  // The user moved the caret (click, tap, arrows): after the separator means "edit the cents".
-  const followCaret = () => {
-    const el = ref.current
-    if (!el) return
-    delete el.dataset.fresh
-    if (el.selectionStart !== el.selectionEnd) return // a real selection: leave it
-    entry.current = entryAtCaret(entry.current, el.value, el.selectionStart ?? el.value.length, latest.current.dec)
-    placeCaret()
-  }
-  useLayoutEffect(placeCaret)
-  const placeCaretRef = useRef(placeCaret)
-  useLayoutEffect(() => {
-    placeCaretRef.current = placeCaret
-  })
+  useLayoutEffect(toEnd)
 
   useEffect(() => {
     const el = ref.current
@@ -401,22 +380,19 @@ export function MoneyInput({ value, onChange, onFocus, ...rest }: { value: strin
       if (ev.inputType === 'insertLineBreak' || ev.inputType === 'insertParagraph') return
       ev.preventDefault()
       const { value: v, onChange: change, dec: d, group: g } = latest.current
-      // Everything selected (on focus, or select-all): the next key replaces the amount.
+      // Everything selected (on focus, or select-all): the next key starts a new amount.
       const replacing = !!el.dataset.fresh || (v.length > 0 && el.selectionStart === 0 && el.selectionEnd === v.length)
       delete el.dataset.fresh
-      let e = replacing ? EMPTY_ENTRY : entry.current
+      let e = replacing ? EMPTY_ENTRY : entryFromText(v, d)
       const t = ev.inputType
       if (t === 'insertFromPaste' || t === 'insertFromDrop') {
-        const text = ev.data ?? ev.dataTransfer?.getData('text/plain') ?? ''
-        const n = parseAmount(text)
+        const n = parseAmount(ev.data ?? ev.dataTransfer?.getData('text/plain') ?? '')
         if (n != null) e = entryFromText(n.toFixed(2), '.')
       } else if (t.startsWith('insert') && ev.data) e = applyMoneyOp(e, { type: 'insert', text: ev.data })
       else if (t.startsWith('delete')) e = replacing ? EMPTY_ENTRY : applyMoneyOp(e, { type: 'delete' })
-      entry.current = e
       const text = entryToText(e, d, g)
       change(text)
-      // Leaving the cents can keep the text the same ("1 291,00"), so no re-render moves the caret.
-      if (text === v) placeCaretRef.current()
+      if (text === v) toEnd()
     }
     el.addEventListener('beforeinput', onBeforeInput)
     return () => el.removeEventListener('beforeinput', onBeforeInput)
@@ -427,21 +403,27 @@ export function MoneyInput({ value, onChange, onFocus, ...rest }: { value: strin
       {...rest}
       ref={ref}
       type="text"
-      inputMode="decimal"
+      inputMode="numeric"
       autoComplete="off"
       value={value}
       onChange={() => {}}
       onFocus={(e) => {
-        // Select the prefilled amount so typing replaces it, like most banking apps do.
+        // Select the prefilled amount so typing starts a new one, like most banking apps do.
         if (e.currentTarget.value) {
           e.currentTarget.dataset.fresh = '1'
           e.currentTarget.select()
         }
         onFocus?.(e)
       }}
-      onClick={followCaret}
+      onClick={() => {
+        if (ref.current) delete ref.current.dataset.fresh
+        toEnd()
+      }}
       onKeyUp={(e) => {
-        if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') followCaret()
+        if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') {
+          if (ref.current) delete ref.current.dataset.fresh
+          toEnd()
+        }
         rest.onKeyUp?.(e)
       }}
     />
