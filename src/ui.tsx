@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { CATEGORY_BY_ID } from './lib/categories'
-import { applyMoneyOp, EMPTY_ENTRY, entryFromText, entryToText, formatMoney, parseAmount, type MoneyEntry } from './lib/money'
+import { applyMoneyOp, caretFor, EMPTY_ENTRY, entryAtCaret, entryFromText, entryToText, formatMoney, parseAmount, type MoneyEntry } from './lib/money'
 import { useI18n } from './i18n'
 
 /* ───────── Icons ───────── */
@@ -374,8 +374,18 @@ export function MoneyInput({ value, onChange, onFocus, ...rest }: { value: strin
     if (!el || document.activeElement !== el) return
     const v = el.value
     if (!v || (el.selectionStart === 0 && el.selectionEnd === v.length && v.length > 0 && el.dataset.fresh)) return
-    const pos = entry.current.centsTyped < 0 ? v.length - 3 : v.length
+    const pos = caretFor(entry.current, v, latest.current.dec)
     if (el.selectionStart !== pos || el.selectionEnd !== pos) el.setSelectionRange(pos, pos)
+  }
+
+  // The user moved the caret (click, tap, arrows): after the separator means "edit the cents".
+  const followCaret = () => {
+    const el = ref.current
+    if (!el) return
+    delete el.dataset.fresh
+    if (el.selectionStart !== el.selectionEnd) return // a real selection: leave it
+    entry.current = entryAtCaret(entry.current, el.value, el.selectionStart ?? el.value.length, latest.current.dec)
+    placeCaret()
   }
   useLayoutEffect(placeCaret)
   const placeCaretRef = useRef(placeCaret)
@@ -429,15 +439,9 @@ export function MoneyInput({ value, onChange, onFocus, ...rest }: { value: strin
         }
         onFocus?.(e)
       }}
-      onClick={() => {
-        if (ref.current) delete ref.current.dataset.fresh
-        placeCaret()
-      }}
+      onClick={followCaret}
       onKeyUp={(e) => {
-        if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') {
-          if (ref.current) delete ref.current.dataset.fresh
-          placeCaret()
-        }
+        if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') followCaret()
         rest.onKeyUp?.(e)
       }}
     />

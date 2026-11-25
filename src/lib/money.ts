@@ -168,8 +168,9 @@ export function applyMoneyOp(e: MoneyEntry, op: MoneyOp): MoneyEntry {
   const next = { ...e }
   if (op.type === 'delete') {
     if (next.centsTyped > 0) {
+      // Clear the cent digit left of the caret and step back over it.
       next.centsTyped--
-      next.cents = next.centsTyped === 0 ? '00' : next.cents[0] + '0'
+      next.cents = next.centsTyped === 0 ? '0' + next.cents[1] : next.cents[0] + '0'
     } else if (next.centsTyped === 0) next.centsTyped = -1
     else if (next.units) next.units = next.units.slice(0, -1)
     else next.negative = false
@@ -180,7 +181,8 @@ export function applyMoneyOp(e: MoneyEntry, op: MoneyOp): MoneyEntry {
       if (next.centsTyped < 0) {
         if (next.units.length < 10) next.units = (next.units === '0' ? '' : next.units) + ch
       } else if (next.centsTyped < 2) {
-        next.cents = next.centsTyped === 0 ? ch + '0' : next.cents[0] + ch
+        // Overwrite the cent digit at the caret: ",5|0" + "7" → ",57"
+        next.cents = next.centsTyped === 0 ? ch + next.cents[1] : next.cents[0] + ch
         next.centsTyped++
       }
     } else if ((ch === ',' || ch === '.') && next.centsTyped < 0) {
@@ -189,4 +191,18 @@ export function applyMoneyOp(e: MoneyEntry, op: MoneyOp): MoneyEntry {
     } else if (ch === '-' || ch === '−') next.negative = !next.negative
   }
   return next
+}
+
+/** Where the caret goes in the text for an entry: before the separator, or inside the cents. */
+export function caretFor(e: MoneyEntry, text: string, dec: ',' | '.'): number {
+  const sep = text.lastIndexOf(dec)
+  if (sep < 0) return text.length
+  return e.centsTyped < 0 ? sep : sep + 1 + Math.min(e.centsTyped, 2)
+}
+
+/** The user put the caret somewhere (click, tap, arrow keys): after the separator means editing cents. */
+export function entryAtCaret(e: MoneyEntry, text: string, caret: number, dec: ',' | '.'): MoneyEntry {
+  const sep = text.lastIndexOf(dec)
+  if (sep < 0 || caret <= sep) return { ...e, centsTyped: -1 }
+  return { ...e, centsTyped: Math.min(2, caret - sep - 1) }
 }
